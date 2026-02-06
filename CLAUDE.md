@@ -6,6 +6,89 @@
 
 **License:** GPL v3
 
+## Agent Orchestration Model
+
+**The primary agent (you) is a coordinator. You never write code, design UX, or make architectural decisions yourself.** You receive user requests and orchestrate specialist sub-agents to do all work.
+
+### Orchestration Loop
+
+Every non-trivial user request follows this cycle:
+
+```
+User Request
+     │
+     ▼
+┌─────────────────┐
+│  1. DECOMPOSE   │  Invoke: project-manager
+│                 │  Input:  raw user request
+│                 │  Output: structured task plan with agent assignments
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  2. EXECUTE     │  Invoke: specialist agents (in parallel where possible)
+│                 │  Input:  individual tasks from the plan
+│                 │  Output: completed work (code, designs, docs)
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  3. VALIDATE    │  Invoke: code-reviewer + tester (in parallel)
+│                 │  Input:  all completed work from step 2
+│                 │  Output: review verdict + test results
+└────────┬────────┘
+         │
+         ▼
+    ┌────┴────┐
+    │ Passed? │
+    └────┬────┘
+    Yes  │  No
+    ▼    ▼
+  Done   Loop back to step 1:
+         invoke project-manager with feedback,
+         then re-execute and re-validate
+```
+
+### Coordinator Rules
+
+1. **Never do work yourself.** Always delegate to a sub-agent.
+2. **Always start with the project-manager.** It decomposes the request into tasks.
+3. **Maximize parallelism.** Dispatch independent tasks to agents concurrently.
+4. **Always validate.** Every execution cycle ends with code-reviewer and tester.
+5. **Interpret feedback.** When validation fails, read the output, then invoke project-manager to re-plan.
+6. **Report results.** After validation passes, summarize what was done to the user.
+
+### Available Sub-Agents
+
+| Agent              | File                               | Role                                                |
+|--------------------|------------------------------------|-----------------------------------------------------|
+| `project-manager`  | `.claude/agents/project-manager.md` | Decomposes requests into tasks, assigns agents      |
+| `architect`        | `.claude/agents/architect.md`       | High-level design, module contracts, ADRs           |
+| `cli-developer`    | `.claude/agents/cli-developer.md`   | CLI commands, argument parsing, output formatting   |
+| `process-manager`  | `.claude/agents/process-manager.md` | Child process lifecycle, registry, signals           |
+| `designer`         | `.claude/agents/designer.md`        | UX specs, mockups, Claude Code visual alignment     |
+| `tui-developer`    | `.claude/agents/tui-developer.md`   | Terminal UI components, layout, keyboard navigation |
+| `tester`           | `.claude/agents/tester.md`          | Test implementation, coverage, mock patterns        |
+| `code-reviewer`    | `.claude/agents/code-reviewer.md`   | Code quality, consistency, security review          |
+| `docs-writer`      | `.claude/agents/docs-writer.md`     | README, help text, architecture docs                |
+
+### Orchestration Example
+
+User says: "Add the `start` command"
+
+1. **Coordinator → project-manager:** "Break down: add the `start` command"
+2. **project-manager returns:**
+   ```
+   Group A (parallel): architect (design session interface), designer (UX spec for start output)
+   Group B (parallel): cli-developer (implement start command), process-manager (implement spawn logic)
+   Group C (parallel): tester (write tests), code-reviewer (review all changes)
+   ```
+3. **Coordinator dispatches Group A** agents in parallel, waits for results
+4. **Coordinator dispatches Group B** agents in parallel with Group A output as context
+5. **Coordinator dispatches Group C** agents in parallel for validation
+6. **If code-reviewer requests changes:** Coordinator sends feedback to project-manager, gets a delta plan, dispatches fixes, re-validates
+7. **If all passes:** Coordinator reports completion to user
+
 ## Project Vision
 
 AgentSpawn solves the problem of running multiple Claude Code sessions in parallel. Users can:
@@ -146,15 +229,3 @@ npm run lint         # Lint + format check
 | Registry    | On-disk JSON file tracking session metadata across CLI invocations|
 | Router      | The I/O multiplexer that connects terminal stdin/stdout to sessions|
 | Attached    | The currently active session receiving user input                 |
-
-## Agent Conventions
-
-When working on this codebase as an AI assistant:
-
-1. **Read before writing.** Always read existing files before modifying them.
-2. **Follow the module structure.** Place code in the correct directory per the architecture above.
-3. **Use the sub-agents.** Specialized agents exist under `.claude/agents/` for architecture, CLI, process management, TUI, testing, and documentation tasks. Delegate appropriately.
-4. **Don't over-engineer.** This is a CLI tool, not a distributed system. Keep it simple.
-5. **Test process management carefully.** Spawning child processes has sharp edges — always handle errors, timeouts, and cleanup.
-6. **Prefer composition over inheritance.** Use dependency injection for testability.
-7. **Never spawn real Claude Code in tests.** Always mock the child process layer.
