@@ -7,6 +7,7 @@ import { registerStopCommand } from './commands/stop.js';
 import { registerListCommand } from './commands/list.js';
 import { registerExecCommand } from './commands/exec.js';
 import { registerSwitchCommand } from './commands/switch.js';
+import { registerTUICommand } from './commands/tui.js';
 
 export const program: Command = new Command()
   .name('agentspawn')
@@ -27,6 +28,7 @@ export async function run(argv: string[]): Promise<void> {
   registerListCommand(program, manager, router);
   registerExecCommand(program, manager, router);
   registerSwitchCommand(program, manager, router);
+  registerTUICommand(program, manager, router);
 
   await program.parseAsync(argv);
 }

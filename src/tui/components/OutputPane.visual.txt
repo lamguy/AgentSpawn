@@ -1,0 +1,146 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                    OutputPane Component - Visual Examples                   ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Example 1: Running Session with Tool Calls                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+> project-a ⏹                         ← Header (cyan, bold) with spinner
+
+⏺ Bash(npm test)                      ← Tool call (cyan)
+  ⎿ All 42 tests passed               ← Tool result (gray/dimmed)
+
+Claude: Working on the authentication module...
+
+⏺ Read(src/auth.ts)                   ← Tool call (cyan)
+  ⎿ Read 1 file                        ← Tool result (gray/dimmed)
+
+⏺ Edit(src/auth.ts)                   ← Tool call (cyan)
+  ⎿ Updated authentication logic      ← Tool result (gray/dimmed)
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Example 2: Stopped Session (No Spinner)                                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+> project-b                            ← Header (cyan, bold) - no spinner
+
+Session completed successfully.
+All tasks finished.
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Example 3: Session with Error Output                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+> project-c ⏹
+
+⏺ Bash(npm run build)
+  ⎿ Build started...
+
+Error: Module not found                ← Error (red)
+  at require (internal/module.js)      ← Error (red)
+
+⏺ Bash command failed with exit code 1
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Example 4: Empty State - No Session                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+No session attached                     ← Empty state (gray/dimmed)
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Example 5: Empty State - No Output Yet                                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+> new-session ⏹
+
+No output yet...                        ← Empty state (gray/dimmed)
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Example 6: Scrollback Indicator                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+> long-session ⏹
+
+... (many lines of output) ...
+
+[15 lines below, scroll to see more]   ← Scrollback indicator (gray/dimmed)
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Example 7: Mixed Output (Regular Text + Tool Calls)                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+> project-d ⏹
+
+Claude: I'll help you fix the authentication bug.
+
+⏺ Read(src/auth.ts)
+  ⎿ Read 1 file
+
+Looking at the code, I can see the issue is in the token validation.
+
+⏺ Edit(src/auth.ts)
+  ⎿ Updated token validation logic
+
+⏺ Bash(npm test)
+  ⎿ All tests passed
+
+The fix is complete! The authentication now properly validates tokens.
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Example 8: ANSI Escape Sequences Preserved                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+> colorful-output ⏹
+
+⏺ Bash(npm run dev)
+  ⎿ Server started at http://localhost:3000
+
+[32m✓[0m Build completed successfully   ← Green checkmark (ANSI preserved)
+[33m⚠[0m Warning: Deprecated API used    ← Yellow warning (ANSI preserved)
+[36mℹ[0m Watching for file changes...    ← Cyan info (ANSI preserved)
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                              Color Reference                                 ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+Header text:     CYAN (semantic: informational)
+Tool calls (⏺):  CYAN (semantic: action/invocation)
+Tool results (⎿): GRAY/DIMMED (semantic: secondary info)
+Error lines:     RED (semantic: error/danger)
+Regular text:    DEFAULT (preserves ANSI codes)
+Empty states:    GRAY/DIMMED (semantic: muted)
+Spinner (⏹):     Shown only for running sessions
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                           Layout Integration                                 ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ AgentSpawn v0.1.0                              [3 sessions]  model: opus    │
+├──────────────────────┬──────────────────────────────────────────────────────┤
+│ Sessions             │ > project-a ⏹            ← OutputPane starts here    │
+│                      │                                                       │
+│ > project-a [running]│ ⏺ Bash(npm test)                                     │
+│   project-b [running]│   ⎿ All 42 tests passed                              │
+│   project-c [stopped]│                                                       │
+│                      │ Claude: Working on auth module...                    │
+│                      │                                                       │
+│                      │ ⏺ Read(src/auth.ts)                                  │
+│                      │   ⎿ Read 1 file                                       │
+│                      │                                                       │
+│                      │ ⏺ Edit(src/auth.ts)                                  │
+│                      │   ⎿ Updated authentication                           │
+├──────────────────────┴──────────────────────────────────────────────────────┤
+│ [Tab] switch  [Enter] attach  [↑↓] scroll  [q] quit  [?] help               │
+└─────────────────────────────────────────────────────────────────────────────┘
+      ↑                                    ↑
+SessionListPane                      OutputPane

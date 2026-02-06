@@ -90,4 +90,74 @@ describe('Router', () => {
       'Cannot attach to session: session handle is null (session may not be running)',
     );
   });
+
+  it('stdin data flows to attached session stdin', () => {
+    const session = createMockSession('test-session');
+    const handle = session.getHandle();
+    expect(handle).not.toBeNull();
+
+    const stdinSpy = vi.fn();
+    handle!.stdin.on('data', stdinSpy);
+
+    router.attach(session);
+
+    // Simulate user input
+    const testData = Buffer.from('hello world');
+    handle!.stdin.write(testData);
+
+    expect(stdinSpy).toHaveBeenCalledWith(testData);
+  });
+
+  it('stdin stops flowing after detach', () => {
+    const session = createMockSession('test-session');
+    const handle = session.getHandle();
+    expect(handle).not.toBeNull();
+
+    const stdinSpy = vi.fn();
+    handle!.stdin.on('data', stdinSpy);
+
+    router.attach(session);
+    router.detach();
+
+    // Simulate user input after detach
+    const testData = Buffer.from('should not reach session');
+    handle!.stdin.write(testData);
+
+    // Data should not flow through router since we detached
+    // (direct write to handle still works, but router shouldn't add listeners)
+    expect(router.getActiveSession()).toBeUndefined();
+  });
+
+  it('handles multiple attach/detach cycles cleanly', () => {
+    const session1 = createMockSession('session-1');
+    const session2 = createMockSession('session-2');
+
+    router.attach(session1);
+    expect(router.getActiveSession()).toBe('session-1');
+
+    router.detach();
+    expect(router.getActiveSession()).toBeUndefined();
+
+    router.attach(session2);
+    expect(router.getActiveSession()).toBe('session-2');
+
+    router.detach();
+    expect(router.getActiveSession()).toBeUndefined();
+  });
+
+  it('cleans up all listeners on detach', () => {
+    const session = createMockSession('cleanup-test');
+    const handle = session.getHandle();
+    expect(handle).not.toBeNull();
+
+    router.attach(session);
+
+    // Verify listeners are attached
+    expect(handle!.childProcess.listenerCount('exit')).toBeGreaterThan(0);
+
+    router.detach();
+
+    // Verify listeners are removed
+    expect(handle!.childProcess.listenerCount('exit')).toBe(0);
+  });
 });

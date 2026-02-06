@@ -27,9 +27,37 @@ export class Router {
 
     const name = this.activeSessionName;
 
-    // stdin: forward process.stdin data to session stdin
+    // stdin: forward process.stdin data to session stdin with error handling
     this.stdinHandler = (data: Buffer) => {
-      handle.stdin.write(data);
+      // Skip if session is detached (race condition guard)
+      if (!this.attachedHandle || this.attachedHandle !== handle) {
+        return;
+      }
+
+      // Verify stdin is still writable
+      if (handle.stdin.destroyed || handle.stdin.writableEnded) {
+        process.stderr.write(`Session "${name}" stdin closed, detaching.\n`);
+        this.detach();
+        return;
+      }
+
+      try {
+        const canWrite = handle.stdin.write(data);
+
+        // Handle backpressure - pause process.stdin until session stdin drains
+        if (!canWrite) {
+          process.stdin.pause();
+          handle.stdin.once('drain', () => {
+            if (this.attachedHandle === handle && process.stdin.readable) {
+              process.stdin.resume();
+            }
+          });
+        }
+      } catch (err) {
+        // Stdin pipe broken - detach gracefully
+        process.stderr.write(`Session "${name}" stdin error: ${err}, detaching.\n`);
+        this.detach();
+      }
     };
     process.stdin.on('data', this.stdinHandler);
 
@@ -74,46 +102,60 @@ export class Router {
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(true);
       process.stdin.resume();
+    } else {
+      // For non-TTY stdin (pipes, redirects), ensure it's readable
+      process.stdin.resume();
     }
   }
 
   detach(): void {
     const handle = this.attachedHandle;
 
+    // Immediately clear attachedHandle to prevent race conditions
+    // (new stdin data arriving during cleanup)
+    this.attachedHandle = null;
+
     // Remove stdin listener from process.stdin
     if (this.stdinHandler) {
       process.stdin.removeListener('data', this.stdinHandler);
+      this.stdinHandler = null;
     }
 
     // Remove stdout listener from session
     if (handle && this.stdoutHandler) {
       handle.stdout.removeListener('data', this.stdoutHandler);
+      this.stdoutHandler = null;
     }
 
     // Remove stderr listener from session
     if (handle && this.stderrHandler) {
       handle.stderr.removeListener('data', this.stderrHandler);
+      this.stderrHandler = null;
     }
 
     // Remove exit listener from session child process
     if (handle && this.exitHandler) {
       handle.childProcess.removeListener('exit', this.exitHandler);
+      this.exitHandler = null;
     }
 
     // Restore TTY state
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(false);
       process.stdin.pause();
+    } else {
+      // For non-TTY stdin, pause to stop reading
+      process.stdin.pause();
     }
 
-    // Clear all references
+    // Remove any drain listeners we may have added during backpressure handling
+    if (handle && handle.stdin) {
+      handle.stdin.removeAllListeners('drain');
+    }
+
+    // Clear remaining references
     this.activeSession = null;
-    this.attachedHandle = null;
     this.activeSessionName = undefined;
-    this.stdinHandler = null;
-    this.stdoutHandler = null;
-    this.stderrHandler = null;
-    this.exitHandler = null;
   }
 
   getActiveSession(): string | undefined {

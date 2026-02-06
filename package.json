@@ -16,17 +16,21 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "commander": "^13.1.0"
+    "commander": "^13.1.0",
+    "ink": "^6.6.0",
+    "react": "^19.2.4"
   },
   "devDependencies": {
-    "typescript": "^5.7.3",
-    "tsup": "^8.4.0",
-    "vitest": "^3.0.4",
-    "eslint": "^9.19.0",
     "@eslint/js": "^9.19.0",
-    "typescript-eslint": "^8.22.0",
+    "@types/node": "^22.12.2",
+    "@types/react": "^19.2.13",
+    "eslint": "^9.19.0",
+    "ink-testing-library": "^4.0.0",
     "prettier": "^3.4.2",
-    "@types/node": "^22.12.2"
+    "tsup": "^8.4.0",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.22.0",
+    "vitest": "^3.0.4"
   },
   "engines": {
     "node": ">=20"
