@@ -1,4 +1,5 @@
 import { RegistryData, RegistryEntry } from '../types.js';
+import { RegistryCorruptError } from '../utils/errors.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -8,7 +9,25 @@ export class Registry {
   async load(): Promise<RegistryData> {
     try {
       const content = await fs.readFile(this.filePath, 'utf-8');
-      return JSON.parse(content) as RegistryData;
+
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(content);
+      } catch {
+        throw new RegistryCorruptError(this.filePath);
+      }
+
+      if (
+        typeof parsed !== 'object' ||
+        parsed === null ||
+        typeof (parsed as Record<string, unknown>).version !== 'number' ||
+        typeof (parsed as Record<string, unknown>).sessions !== 'object' ||
+        (parsed as Record<string, unknown>).sessions === null
+      ) {
+        throw new RegistryCorruptError(this.filePath);
+      }
+
+      return parsed as RegistryData;
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
         return { version: 1, sessions: {} };

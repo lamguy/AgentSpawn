@@ -1,7 +1,17 @@
+import type { ChildProcess } from 'node:child_process';
+import type { Writable, Readable } from 'node:stream';
+
 export enum SessionState {
   Running = 'running',
   Stopped = 'stopped',
   Crashed = 'crashed',
+}
+
+export interface SessionHandle {
+  childProcess: ChildProcess;
+  stdin: Writable;
+  stdout: Readable;
+  stderr: Readable;
 }
 
 export interface SessionConfig {
@@ -16,6 +26,7 @@ export interface SessionInfo {
   state: SessionState;
   startedAt: Date | null;
   workingDirectory: string;
+  exitCode?: number | null;
 }
 
 export interface RegistryEntry {
@@ -24,6 +35,7 @@ export interface RegistryEntry {
   state: SessionState;
   startedAt: string;
   workingDirectory: string;
+  exitCode?: number | null;
 }
 
 export interface RegistryData {
