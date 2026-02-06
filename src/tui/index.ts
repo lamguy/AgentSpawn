@@ -47,8 +47,10 @@ export class TUI {
       // Only forward input if we're in attached mode
       if (this.state.mode === 'attached' && this.state.attachedSessionName) {
         const session = this.manager.getSession(this.state.attachedSessionName);
+
         if (session) {
           const handle = session.getHandle();
+
           if (handle && handle.stdin && !handle.stdin.destroyed) {
             try {
               handle.stdin.write(data);

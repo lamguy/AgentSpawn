@@ -15,8 +15,7 @@ export class SessionManagerAdapter implements SessionManagerSnapshot {
   }
 
   getSession(name: string): SessionInfo | undefined {
-    const session = this.manager.getSession(name);
-    return session ? session.getInfo() : undefined;
+    return this.manager.getSessionInfo(name);
   }
 }
 
