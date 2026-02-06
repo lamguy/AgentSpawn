@@ -4,22 +4,30 @@ Manage multiple Claude Code instances from a single terminal. Start, stop, switc
 
 ## Screenshots
 
-### Help & Commands
+### Main Help
 
 <p align="center">
   <img src="docs/screenshots/help.svg" alt="agentspawn --help" width="700">
 </p>
 
-### Running Commands
-
-<p align="center">
-  <img src="docs/screenshots/commands.svg" alt="CLI commands demo" width="700">
-</p>
-
-### Subcommand Help
+### Command Help
 
 <p align="center">
   <img src="docs/screenshots/start-help.svg" alt="agentspawn start --help" width="700">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/stop-help.svg" alt="agentspawn stop --help" width="700">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/list-help.svg" alt="agentspawn list --help" width="700">
+</p>
+
+### Session List
+
+<p align="center">
+  <img src="docs/screenshots/list.svg" alt="agentspawn list" width="700">
 </p>
 
 ### Error Handling
@@ -28,10 +36,10 @@ Manage multiple Claude Code instances from a single terminal. Start, stop, switc
   <img src="docs/screenshots/errors.svg" alt="Error handling" width="700">
 </p>
 
-### Test Suite
+### Test Suite (60 tests)
 
 <p align="center">
-  <img src="docs/screenshots/tests.svg" alt="Test suite — 50 tests passing" width="700">
+  <img src="docs/screenshots/tests.svg" alt="Test suite — 60 tests passing" width="700">
 </p>
 
 ## Install
@@ -54,10 +62,11 @@ npm link
 ```bash
 agentspawn start project-a                # Start a session
 agentspawn start project-b --dir ~/work   # Start with a working directory
-agentspawn list                           # See all sessions
+agentspawn list                           # See all sessions (colored table)
+agentspawn list --json                    # Machine-readable JSON output
 agentspawn exec project-a "fix the bug"   # Send a command to a session
-agentspawn switch project-a               # Attach to a session
-agentspawn stop project-a                 # Stop a session
+agentspawn switch project-a               # Attach terminal I/O (Ctrl+C to detach)
+agentspawn stop project-a                 # Gracefully stop a session
 agentspawn stop --all                     # Stop everything
 ```
 
@@ -65,13 +74,26 @@ agentspawn stop --all                     # Stop everything
 
 | Command | Description |
 |---------|-------------|
-| `agentspawn start <name>` | Start a new named Claude Code session |
-| `agentspawn stop [name]` | Stop a session (or `--all` to stop everything) |
-| `agentspawn list` | List all sessions with status (`--json` for machine output) |
-| `agentspawn exec <name> <cmd>` | Send a command to a specific session |
-| `agentspawn switch <name>` | Attach your terminal to a session |
+| `agentspawn start <name>` | Spawn a new Claude Code child process with a name |
+| `agentspawn stop [name]` | Gracefully stop a session (SIGTERM, then SIGKILL after timeout) |
+| `agentspawn stop --all` | Stop all running sessions |
+| `agentspawn list` | Show all sessions with colored status table |
+| `agentspawn list --json` | Output session info as JSON for scripting |
+| `agentspawn exec <name> <cmd>` | Write a command to a session's stdin pipe |
+| `agentspawn switch <name>` | Attach terminal I/O to a session (Ctrl+C to detach) |
 
 Every command supports `--help` for detailed usage.
+
+## Features
+
+- **Process isolation** — each session is a separate `child_process.spawn` with its own working directory and environment
+- **Persistent registry** — session state survives CLI restarts via `~/.agentspawn/sessions.json`
+- **Stale PID detection** — on startup, validates all registry PIDs and marks dead sessions as crashed
+- **Graceful shutdown** — SIGTERM first, SIGKILL after configurable timeout (default 5s)
+- **Crash recovery** — sessions that exit unexpectedly are automatically marked as crashed
+- **I/O multiplexing** — attach/detach terminal to any running session with proper stream cleanup
+- **Colored output** — green for running, red for crashed, gray for stopped
+- **Scriptable** — `--json` flag, proper exit codes (0 success, 1 user error, 2 system error)
 
 ## Development
 
@@ -79,6 +101,7 @@ Every command supports `--help` for detailed usage.
 
 - Node.js >= 20
 - npm
+- `claude` CLI installed (for running actual sessions)
 
 ### Setup
 
@@ -97,16 +120,16 @@ node dist/index.js     # Run the CLI directly
 ### Test
 
 ```bash
-npm test               # Run all 50 tests
+npm test               # Run all 60 tests (mocked — no real Claude needed)
 ```
 
 ### Lint & Format
 
 ```bash
-npm run lint           # ESLint check
+npm run lint           # ESLint check (no-explicit-any enforced as error)
 npm run format         # Auto-format with Prettier
 npm run format:check   # Check formatting without changing files
-npm run typecheck      # TypeScript type checking
+npm run typecheck      # TypeScript strict mode type checking
 ```
 
 ## Project Structure
@@ -115,30 +138,42 @@ npm run typecheck      # TypeScript type checking
 src/
   cli/              Command definitions and argument parsing
     commands/       start, stop, list, exec, switch
-    index.ts        CLI entry point
+    index.ts        CLI entry point — wires manager + router to commands
   core/             Session lifecycle management
-    session.ts      Single Claude Code instance wrapper
-    manager.ts      Orchestrates all sessions
-    registry.ts     Persists session state to disk
+    session.ts      Spawns Claude Code, tracks PID, handles exit/crash
+    manager.ts      Orchestrates sessions, validates PIDs, persists to registry
+    registry.ts     JSON file persistence with corruption detection
   io/               I/O multiplexing
-    router.ts       Routes stdin/stdout to active session
-    formatter.ts    Output formatting with session prefixes
+    router.ts       Attaches/detaches terminal I/O to sessions
+    formatter.ts    ANSI colored output, session table formatting
   config/           Configuration defaults and validation
-  utils/            Error classes and logging
-  types.ts          Shared TypeScript interfaces
+  utils/            Custom error hierarchy and structured logging
+  types.ts          Shared TypeScript interfaces (SessionHandle, SessionInfo, etc.)
 tests/
   integration/      End-to-end scaffold tests
 ```
 
 ## Architecture
 
-Each Claude Code session runs as an isolated child process. A registry file at `~/.agentspawn/sessions.json` persists session state across CLI invocations. Only the "attached" session receives stdin; all sessions can emit to stdout with session-name prefixes.
+Each Claude Code session runs as an isolated child process spawned via `child_process.spawn('claude')` with piped stdio. A registry file at `~/.agentspawn/sessions.json` persists session metadata across CLI invocations. On startup, the manager validates stored PIDs and marks dead ones as crashed.
 
 ```
-agentspawn start ──> SessionManager.startSession() ──> child_process.spawn("claude")
-agentspawn stop  ──> SessionManager.stopSession()  ──> SIGTERM → timeout → SIGKILL
-agentspawn list  ──> SessionManager.listSessions()  ──> Registry.load()
-agentspawn exec  ──> Router.attach() + stdin.write() ──> session.stdin pipe
+agentspawn start  ──> SessionManager.startSession() ──> spawn("claude") + Registry.addEntry()
+agentspawn stop   ──> SessionManager.stopSession()  ──> SIGTERM → 5s → SIGKILL + Registry.removeEntry()
+agentspawn list   ──> SessionManager.listSessions()  ──> in-memory + Registry merge
+agentspawn exec   ──> Session.getHandle().stdin.write() ──> piped to child process
+agentspawn switch ──> Router.attach()                ──> terminal ↔ session I/O bridge
+```
+
+### Session Lifecycle
+
+```
+STOPPED ──start()──> RUNNING ──stop()──> STOPPED
+                        │
+                   (unexpected exit)
+                        │
+                        ▼
+                     CRASHED
 ```
 
 ## License
