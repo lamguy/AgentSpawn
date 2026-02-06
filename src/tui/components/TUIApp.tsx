@@ -64,9 +64,36 @@ export function TUIApp({
         }
 
         // Forward all other input to the session
+        // Map special keys to their escape sequences before sending
         if (onRawInput) {
-          // Convert input to Buffer
-          const buffer = Buffer.from(input, 'utf8');
+          let keyCode: string;
+
+          if (key.return) {
+            keyCode = '\r'; // Enter
+          } else if (key.tab) {
+            keyCode = key.shift ? '\x1b[Z' : '\t'; // Tab or Shift+Tab
+          } else if (key.upArrow) {
+            keyCode = '\x1b[A'; // Up arrow
+          } else if (key.downArrow) {
+            keyCode = '\x1b[B'; // Down arrow
+          } else if (key.leftArrow) {
+            keyCode = '\x1b[D'; // Left arrow
+          } else if (key.rightArrow) {
+            keyCode = '\x1b[C'; // Right arrow
+          } else if (key.backspace) {
+            keyCode = '\x7f'; // Backspace (DEL)
+          } else if (key.delete) {
+            keyCode = '\x1b[3~'; // Delete
+          } else if (key.ctrl && input === 'c') {
+            keyCode = '\x03'; // Ctrl+C
+          } else if (key.ctrl && input === 'd') {
+            keyCode = '\x04'; // Ctrl+D
+          } else {
+            keyCode = input; // Regular character
+          }
+
+          // Convert to Buffer and send
+          const buffer = Buffer.from(keyCode, 'utf8');
           onRawInput(buffer);
         }
         return;
