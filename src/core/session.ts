@@ -1,4 +1,5 @@
 import { spawn, ChildProcess } from 'node:child_process';
+import { mkdir } from 'node:fs/promises';
 import { SessionState, SessionConfig, SessionInfo } from '../types.js';
 import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
@@ -31,6 +32,7 @@ export class Session extends EventEmitter {
   }
 
   async start(): Promise<void> {
+    await mkdir(this.config.workingDirectory, { recursive: true });
     this.state = SessionState.Running;
     this.startedAt = new Date();
     this.pid = 0; // Prompt-based sessions have no persistent process
