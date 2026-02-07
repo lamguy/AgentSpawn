@@ -171,7 +171,7 @@ export class TUI {
   private executeAction(action: TUIAction): void {
     switch (action.kind) {
       case 'create-session':
-        this.handleCreateSession(action.name, action.directory);
+        this.handleCreateSession(action.name, action.directory, action.permissionMode);
         break;
       case 'stop-session':
         this.handleStopSession(action.sessionName);
@@ -191,11 +191,12 @@ export class TUI {
   /**
    * Create a new session from the session-creation overlay.
    */
-  private async handleCreateSession(name: string, directory: string): Promise<void> {
+  private async handleCreateSession(name: string, directory: string, permissionMode: string): Promise<void> {
     try {
       const session = await this.manager.startSession({
         name,
         workingDirectory: directory || process.cwd(),
+        permissionMode: permissionMode || 'acceptEdits',
       });
       this.outputCapture.captureSession(name, session);
 
@@ -251,12 +252,14 @@ export class TUI {
       // Get session info before stopping
       const info = this.manager.getSession(sessionName)?.getInfo();
       const workingDirectory = info?.workingDirectory ?? process.cwd();
+      const permissionMode = info?.permissionMode ?? 'acceptEdits';
 
       await this.manager.stopSession(sessionName);
 
       const session = await this.manager.startSession({
         name: sessionName,
         workingDirectory,
+        permissionMode,
       });
       this.outputCapture.captureSession(sessionName, session);
       this.setStatusMessage(`Session "${sessionName}" restarted`, 'success');

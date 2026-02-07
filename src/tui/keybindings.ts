@@ -162,9 +162,9 @@ export function handleNavigationKeypress(
       return stateResult(
         pushOverlay(state, {
           kind: 'session-creation',
-          fields: { name: '', directory: '.' },
+          fields: { name: '', directory: '.', permissionMode: 'acceptEdits' },
           activeField: 'name',
-          errors: { name: '', directory: '' },
+          errors: { name: '', directory: '', permissionMode: '' },
           isSubmitting: false,
         }),
       );
@@ -312,9 +312,9 @@ function executeMenuItem(
       return stateResult(
         pushOverlay(popped, {
           kind: 'session-creation',
-          fields: { name: '', directory: '.' },
+          fields: { name: '', directory: '.', permissionMode: 'acceptEdits' },
           activeField: 'name',
-          errors: { name: '', directory: '' },
+          errors: { name: '', directory: '', permissionMode: '' },
           isSubmitting: false,
         }),
       );
@@ -368,25 +368,39 @@ export function handleSessionCreationKeypress(
     case KEY_CODES.ESCAPE:
       return stateResult(popOverlay(state));
 
-    case KEY_CODES.TAB:
+    case KEY_CODES.TAB: {
+      const nextField =
+        overlay.activeField === 'name'
+          ? 'directory'
+          : overlay.activeField === 'directory'
+            ? 'permissionMode'
+            : 'name';
       return stateResult(
         replaceTopOverlay(state, {
           ...overlay,
-          activeField: overlay.activeField === 'name' ? 'directory' : 'name',
+          activeField: nextField,
         }),
       );
+    }
 
-    case KEY_CODES.SHIFT_TAB:
+    case KEY_CODES.SHIFT_TAB: {
+      const prevField =
+        overlay.activeField === 'name'
+          ? 'permissionMode'
+          : overlay.activeField === 'directory'
+            ? 'name'
+            : 'directory';
       return stateResult(
         replaceTopOverlay(state, {
           ...overlay,
-          activeField: overlay.activeField === 'name' ? 'directory' : 'name',
+          activeField: prevField,
         }),
       );
+    }
 
     case KEY_CODES.ENTER: {
       // Validate
-      const errors = { name: '', directory: '' };
+      const errors = { name: '', directory: '', permissionMode: '' };
       const trimmedName = overlay.fields.name.trim();
 
       if (!trimmedName) {
@@ -412,6 +426,7 @@ export function handleSessionCreationKeypress(
         kind: 'create-session',
         name: trimmedName,
         directory: overlay.fields.directory || '.',
+        permissionMode: overlay.fields.permissionMode || 'acceptEdits',
       });
     }
 

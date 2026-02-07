@@ -76,6 +76,7 @@ export class SessionManager {
       exitCode: info.exitCode ?? null,
       claudeSessionId: session.getSessionId(),
       promptCount: info.promptCount,
+      permissionMode: config.permissionMode,
     };
 
     try {
@@ -162,6 +163,7 @@ export class SessionManager {
     const config: SessionConfig = {
       name: entry.name,
       workingDirectory: entry.workingDirectory,
+      permissionMode: entry.permissionMode,
     };
 
     return this.startSession(config, entry.claudeSessionId, entry.promptCount);
@@ -189,6 +191,7 @@ export class SessionManager {
         workingDirectory: entry.workingDirectory,
         exitCode: entry.exitCode ?? null,
         promptCount: 0,
+        permissionMode: entry.permissionMode,
       };
     }
 
@@ -252,6 +255,7 @@ export class SessionManager {
           workingDirectory: entry.workingDirectory,
           exitCode: entry.exitCode ?? null,
           promptCount: 0,
+          permissionMode: entry.permissionMode,
         });
       }
     }

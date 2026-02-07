@@ -5,9 +5,9 @@ import { SessionCreationDialog } from './SessionCreationDialog.js';
 
 describe('SessionCreationDialog', () => {
   const defaults = {
-    fields: { name: '', directory: '' },
+    fields: { name: '', directory: '', permissionMode: 'acceptEdits' },
     activeField: 'name' as const,
-    errors: { name: '', directory: '' },
+    errors: { name: '', directory: '', permissionMode: '' },
     isSubmitting: false,
     onFieldChange: vi.fn(),
     onFieldSwitch: vi.fn(),
@@ -27,23 +27,30 @@ describe('SessionCreationDialog', () => {
     expect(output).toContain('Directory:');
   });
 
+  it('should render permission mode field', () => {
+    const { lastFrame } = render(<SessionCreationDialog {...defaults} />);
+    const output = lastFrame() || '';
+    expect(output).toContain('Permission Mode:');
+  });
+
   it('should render field values when provided', () => {
     const { lastFrame } = render(
       <SessionCreationDialog
         {...defaults}
-        fields={{ name: 'my-session', directory: '/tmp/project' }}
+        fields={{ name: 'my-session', directory: '/tmp/project', permissionMode: 'bypassPermissions' }}
       />,
     );
     const output = lastFrame() || '';
     expect(output).toContain('my-session');
     expect(output).toContain('/tmp/project');
+    expect(output).toContain('bypassPermissions');
   });
 
   it('should render validation errors', () => {
     const { lastFrame } = render(
       <SessionCreationDialog
         {...defaults}
-        errors={{ name: 'Name is required', directory: '' }}
+        errors={{ name: 'Name is required', directory: '', permissionMode: '' }}
       />,
     );
     expect(lastFrame()).toContain('Name is required');

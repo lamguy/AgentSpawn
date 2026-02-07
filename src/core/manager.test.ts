@@ -6,6 +6,35 @@ import { SessionManager } from './manager.js';
 import { Session } from './session.js';
 import { SessionState, SessionConfig } from '../types.js';
 import { SessionAlreadyExistsError, SessionNotFoundError } from '../utils/errors.js';
+import * as childProcess from 'node:child_process';
+import { EventEmitter } from 'node:events';
+
+vi.mock('node:child_process', () => ({
+  spawn: vi.fn(),
+}));
+
+const mockedSpawn = vi.mocked(childProcess.spawn);
+
+interface MockChildProcess extends EventEmitter {
+  pid: number | undefined;
+  stdin: { write: ReturnType<typeof vi.fn>; end: ReturnType<typeof vi.fn> };
+  stdout: EventEmitter;
+  stderr: EventEmitter;
+  kill: ReturnType<typeof vi.fn>;
+}
+
+function createMockChild(pid: number = 12345): MockChildProcess {
+  const child = new EventEmitter() as MockChildProcess;
+  child.pid = pid;
+  child.stdin = {
+    write: vi.fn(),
+    end: vi.fn(),
+  };
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.kill = vi.fn();
+  return child;
+}
 
 function tmpRegistryPath(): string {
   return path.join(
@@ -344,6 +373,66 @@ describe('SessionManager', () => {
     const adopted = await manager.adoptSession('adopt-with-count');
     const info = adopted.getInfo();
     expect(info.promptCount).toBe(5);
+  });
+
+  it('startSession() persists permissionMode in registry', async () => {
+    await manager.init();
+
+    const config: SessionConfig = {
+      name: 'persist-perm-session',
+      workingDirectory: '/tmp/work',
+      permissionMode: 'acceptEdits',
+    };
+    await manager.startSession(config);
+
+    // Read registry file directly
+    const raw = await fs.readFile(registryPath, 'utf-8');
+    const data = JSON.parse(raw);
+
+    expect(data.sessions['persist-perm-session'].permissionMode).toBe('acceptEdits');
+  });
+
+  it('adoptSession() preserves permissionMode from registry', async () => {
+    const data = {
+      version: 1,
+      sessions: {
+        'adopt-with-perm': {
+          name: 'adopt-with-perm',
+          pid: 0,
+          state: 'stopped',
+          startedAt: new Date().toISOString(),
+          workingDirectory: '/tmp/adopt',
+          exitCode: null,
+          claudeSessionId: '77777777-7777-7777-7777-777777777777',
+          promptCount: 2,
+          permissionMode: 'bypassPermissions',
+        },
+      },
+    };
+    const dir = path.dirname(registryPath);
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(registryPath, JSON.stringify(data, null, 2), 'utf-8');
+
+    await manager.init();
+
+    const adopted = await manager.adoptSession('adopt-with-perm');
+    const info = adopted.getInfo();
+    expect(info.permissionMode).toBe('bypassPermissions');
+
+    // Verify that when sending a prompt, the permissionMode is passed to spawn
+    const mockChild = createMockChild(42);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    mockedSpawn.mockReturnValue(mockChild as any);
+
+    const p = adopted.sendPrompt('test');
+
+    const args = mockedSpawn.mock.calls[0][1] as string[];
+    expect(args).toContain('--permission-mode');
+    const permModeIndex = args.indexOf('--permission-mode');
+    expect(args[permModeIndex + 1]).toBe('bypassPermissions');
+
+    mockChild.emit('close', 0);
+    await p;
   });
 
   describe('refreshRegistry()', () => {

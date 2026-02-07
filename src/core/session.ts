@@ -66,6 +66,10 @@ export class Session extends EventEmitter {
         args.push('--resume', this.claudeSessionId);
       }
 
+      if (this.config.permissionMode) {
+        args.push('--permission-mode', this.config.permissionMode);
+      }
+
       const child = spawn('claude', args, {
         cwd: this.config.workingDirectory,
         env: { ...process.env, ...this.config.env },
@@ -158,6 +162,7 @@ export class Session extends EventEmitter {
       workingDirectory: this.config.workingDirectory,
       exitCode: this.exitCode,
       promptCount: this.promptCount,
+      permissionMode: this.config.permissionMode,
     };
   }
 

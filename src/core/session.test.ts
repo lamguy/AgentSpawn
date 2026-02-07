@@ -378,4 +378,59 @@ describe('Session', () => {
     mockChild.emit('close', 0);
     await p;
   });
+
+  it('sendPrompt() includes --permission-mode in spawn args when set', async () => {
+    const configWithPermission: SessionConfig = {
+      name: 'perm-session',
+      workingDirectory: '/tmp/perm',
+      permissionMode: 'acceptEdits',
+    };
+    const permSession = new Session(configWithPermission);
+    await permSession.start();
+
+    const mockChild = createMockChild(42);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    mockedSpawn.mockReturnValue(mockChild as any);
+
+    const p = permSession.sendPrompt('test');
+
+    // Verify spawn was called with --permission-mode
+    const args = mockedSpawn.mock.calls[0][1] as string[];
+    expect(args).toContain('--permission-mode');
+    const permModeIndex = args.indexOf('--permission-mode');
+    expect(args[permModeIndex + 1]).toBe('acceptEdits');
+
+    mockChild.emit('close', 0);
+    await p;
+  });
+
+  it('sendPrompt() omits --permission-mode when not set', async () => {
+    const mockChild = createMockChild(42);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    mockedSpawn.mockReturnValue(mockChild as any);
+
+    await session.start();
+
+    const p = session.sendPrompt('test');
+
+    // Verify spawn was called without --permission-mode
+    const args = mockedSpawn.mock.calls[0][1] as string[];
+    expect(args).not.toContain('--permission-mode');
+
+    mockChild.emit('close', 0);
+    await p;
+  });
+
+  it('getInfo() includes permissionMode', async () => {
+    const configWithPermission: SessionConfig = {
+      name: 'perm-session',
+      workingDirectory: '/tmp/perm',
+      permissionMode: 'bypassPermissions',
+    };
+    const permSession = new Session(configWithPermission);
+    await permSession.start();
+
+    const info = permSession.getInfo();
+    expect(info.permissionMode).toBe('bypassPermissions');
+  });
 });

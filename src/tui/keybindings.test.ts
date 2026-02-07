@@ -478,9 +478,9 @@ describe('handleSessionCreationKeypress', () => {
     const state = createMockState(['existing']);
     const overlay: SessionCreationOverlayState = {
       kind: 'session-creation',
-      fields: { name: '', directory: '.' },
+      fields: { name: '', directory: '.', permissionMode: 'acceptEdits' },
       activeField: 'name',
-      errors: { name: '', directory: '' },
+      errors: { name: '', directory: '', permissionMode: '' },
       isSubmitting: false,
     };
     state.overlayStack = [overlay];
@@ -505,16 +505,43 @@ describe('handleSessionCreationKeypress', () => {
     ).toBe('directory');
   });
 
+  it('should cycle through all three fields in session creation', () => {
+    const { state, overlay } = creationState();
+    // Start at name
+    expect(overlay.activeField).toBe('name');
+
+    // Tab to directory
+    const s1 = expectState(
+      handleSessionCreationKeypress(state, overlay, KEY_CODES.TAB),
+    );
+    const o1 = s1.overlayStack[0] as SessionCreationOverlayState;
+    expect(o1.activeField).toBe('directory');
+
+    // Tab to permissionMode
+    const s2 = expectState(
+      handleSessionCreationKeypress(s1, o1, KEY_CODES.TAB),
+    );
+    const o2 = s2.overlayStack[0] as SessionCreationOverlayState;
+    expect(o2.activeField).toBe('permissionMode');
+
+    // Tab back to name
+    const s3 = expectState(
+      handleSessionCreationKeypress(s2, o2, KEY_CODES.TAB),
+    );
+    const o3 = s3.overlayStack[0] as SessionCreationOverlayState;
+    expect(o3.activeField).toBe('name');
+  });
+
   it('should switch fields back on Shift+Tab', () => {
     const { state, overlay: base } = creationState();
-    const overlay = { ...base, activeField: 'directory' as const };
+    const overlay = { ...base, activeField: 'permissionMode' as const };
     state.overlayStack = [overlay];
     const s = expectState(
       handleSessionCreationKeypress(state, overlay, KEY_CODES.SHIFT_TAB),
     );
     expect(
       (s.overlayStack[0] as SessionCreationOverlayState).activeField,
-    ).toBe('name');
+    ).toBe('directory');
   });
 
   it('should append typed characters to active field', () => {
@@ -581,7 +608,7 @@ describe('handleSessionCreationKeypress', () => {
     const { state, overlay: base } = creationState();
     const overlay = {
       ...base,
-      fields: { name: 'new-session', directory: '/tmp/project' },
+      fields: { name: 'new-session', directory: '/tmp/project', permissionMode: 'bypassPermissions' },
     };
     state.overlayStack = [overlay];
     const result = handleSessionCreationKeypress(
@@ -595,6 +622,7 @@ describe('handleSessionCreationKeypress', () => {
     if (action.kind === 'create-session') {
       expect(action.name).toBe('new-session');
       expect(action.directory).toBe('/tmp/project');
+      expect(action.permissionMode).toBe('bypassPermissions');
     }
   });
 
