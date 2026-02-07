@@ -13,7 +13,7 @@ export class Router {
 
   constructor(private readonly options?: RouterOptions) {}
 
-  attach(session: Session): void {
+  attach(session: Session, options?: { onDetachRequest?: () => void }): void {
     const handle = session.getHandle();
     if (!handle) {
       throw new Error(
@@ -29,6 +29,12 @@ export class Router {
 
     // stdin: forward process.stdin data to session stdin with error handling
     this.stdinHandler = (data: Buffer) => {
+      // Check for Escape key (0x1b) - used to detach from TUI mode
+      if (options?.onDetachRequest && data.length === 1 && data[0] === 0x1b) {
+        options.onDetachRequest();
+        return;  // Don't forward Escape to session
+      }
+
       // Skip if session is detached (race condition guard)
       if (!this.attachedHandle || this.attachedHandle !== handle) {
         return;

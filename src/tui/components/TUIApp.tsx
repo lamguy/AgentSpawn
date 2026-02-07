@@ -16,8 +16,6 @@ export interface TUIAppProps {
   onStateChange?: (state: TUIState) => void;
   /** Callback when user requests exit */
   onExit: () => void;
-  /** Callback for raw stdin input (used in attached mode to forward to session) */
-  onRawInput?: (data: Buffer) => void;
 }
 
 /**
@@ -35,7 +33,6 @@ export function TUIApp({
   initialState,
   onStateChange,
   onExit,
-  onRawInput,
 }: TUIAppProps): React.ReactElement {
   const [state, setState] = useState<TUIState>(initialState);
 
@@ -44,62 +41,10 @@ export function TUIApp({
   const terminalHeight = process.stdout.rows || 24;
   const isSmallTerminal = terminalWidth < 80 || terminalHeight < 20;
 
-  // Handle keyboard input
-  // In attached mode, useInput is still active but only processes Escape (for detach)
-  // and forwards all other input via onRawInput callback
-  // In navigation mode, useInput processes TUI shortcuts
+  // Handle keyboard input in navigation mode
+  // Note: In attached mode, the TUI is unmounted so this hook is not active
   useInput(
     (input, key) => {
-      // In attached mode, forward raw input to session (except Escape for detach)
-      if (state.mode === 'attached') {
-        // Check for Escape key to detach
-        if (key.escape) {
-          const result = handleKeypress(state, '\x1b');
-          if ('quit' in result && result.quit) {
-            onExit();
-            return;
-          }
-          setState(result as TUIState);
-          return;
-        }
-
-        // Forward all other input to the session
-        // Map special keys to their escape sequences before sending
-        if (onRawInput) {
-          let keyCode: string;
-
-          if (key.return) {
-            keyCode = '\r'; // Enter
-          } else if (key.tab) {
-            keyCode = key.shift ? '\x1b[Z' : '\t'; // Tab or Shift+Tab
-          } else if (key.upArrow) {
-            keyCode = '\x1b[A'; // Up arrow
-          } else if (key.downArrow) {
-            keyCode = '\x1b[B'; // Down arrow
-          } else if (key.leftArrow) {
-            keyCode = '\x1b[D'; // Left arrow
-          } else if (key.rightArrow) {
-            keyCode = '\x1b[C'; // Right arrow
-          } else if (key.backspace) {
-            keyCode = '\x7f'; // Backspace (DEL)
-          } else if (key.delete) {
-            keyCode = '\x1b[3~'; // Delete
-          } else if (key.ctrl && input === 'c') {
-            keyCode = '\x03'; // Ctrl+C
-          } else if (key.ctrl && input === 'd') {
-            keyCode = '\x04'; // Ctrl+D
-          } else {
-            keyCode = input; // Regular character
-          }
-
-          // Convert to Buffer and send
-          const buffer = Buffer.from(keyCode, 'utf8');
-          onRawInput(buffer);
-        }
-        return;
-      }
-
-      // In navigation mode, process TUI shortcuts
       // Map Ink key events to our key codes
       let keyCode: string;
 
@@ -131,7 +76,7 @@ export function TUIApp({
       // Update state (TypeScript knows result is TUIState here because of the check above)
       setState(result as TUIState);
     },
-    { isActive: true }, // Always active, but we handle mode-specific logic inside
+    { isActive: true },
   );
 
   // Notify parent of state changes

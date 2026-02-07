@@ -42,30 +42,6 @@ export class TUI {
    * Launch the TUI.
    */
   start(): void {
-    // Set up raw input handler for stdin forwarding in attached mode
-    this.rawInputHandler = (data: Buffer): void => {
-      // Only forward input if we're in attached mode
-      if (this.state.mode === 'attached' && this.state.attachedSessionName) {
-        const session = this.manager.getSession(this.state.attachedSessionName);
-
-        if (session) {
-          const handle = session.getHandle();
-
-          if (handle && handle.stdin && !handle.stdin.destroyed) {
-            try {
-              handle.stdin.write(data);
-            } catch (err) {
-              // Stdin write failed, detach gracefully
-              process.stderr.write(
-                `Failed to write to session "${this.state.attachedSessionName}": ${err}\n`,
-              );
-              this.detachFromSession();
-            }
-          }
-        }
-      }
-    };
-
     // Render the app with keyboard handling and exit callback
     this.renderInstance = render(
       React.createElement(TUIApp, {
@@ -94,12 +70,6 @@ export class TUI {
           this.stop();
           process.exit(0);
         },
-        onRawInput: (data: Buffer) => {
-          // Forward raw input in attached mode
-          if (this.rawInputHandler) {
-            this.rawInputHandler(data);
-          }
-        },
       }),
     );
 
@@ -123,7 +93,10 @@ export class TUI {
 
     // Detach from any attached session before cleanup
     if (this.state.mode === 'attached') {
-      this.detachFromSession();
+      // Call router.detach() if attached
+      if (this.routerAdapter.getActiveSession()) {
+        this.router.detach();
+      }
     }
 
     // Clear update interval
@@ -141,7 +114,7 @@ export class TUI {
     // Clear raw input handler
     this.rawInputHandler = null;
 
-    // Unmount render instance
+    // Unmount render instance (only if still mounted)
     if (this.renderInstance) {
       this.renderInstance.unmount();
       this.renderInstance = null;
@@ -228,25 +201,14 @@ export class TUI {
             this.stop();
             process.exit(0);
           },
-          onRawInput: (data: Buffer) => {
-            // Forward raw input in attached mode
-            if (this.rawInputHandler) {
-              this.rawInputHandler(data);
-            }
-          },
         }),
       );
     }
   }
 
   /**
-   * Attach to a session via the router.
+   * Attach to a session by unmounting the TUI and giving the session direct terminal control.
    * This is called when the TUI transitions to attached mode.
-   *
-   * NOTE: We don't use router.attach() directly because that manages its own
-   * stdin/stdout piping which conflicts with Ink's rendering. Instead, we only
-   * use the router to track which session is attached, and we handle stdin
-   * forwarding directly via the rawInputHandler.
    *
    * @param sessionName - The name of the session to attach to
    */
@@ -274,13 +236,26 @@ export class TUI {
         return;
       }
 
-      // In TUI mode, we DON'T call router.attach() because that would
-      // set up its own stdin/stdout piping which conflicts with Ink.
-      // Instead, we just track the attachment ourselves and forward
-      // stdin manually via rawInputHandler.
+      // Step 1: Unmount Ink TUI to release terminal control
+      if (this.renderInstance) {
+        this.renderInstance.unmount();
+        this.renderInstance = null;
+      }
 
-      // Note: If we add a tuiMode option to Router in the future, we would call:
-      // this.router.attach(session, { tuiMode: true });
+      // Step 2: Clear update interval (no need to poll while attached)
+      if (this.updateInterval) {
+        clearInterval(this.updateInterval);
+        this.updateInterval = null;
+      }
+
+      // Step 3: Call router.attach() to forward session I/O to terminal
+      // When user presses Escape, router will call our callback to detach
+      this.router.attach(session, {
+        onDetachRequest: () => {
+          // User pressed Escape - detach and restore TUI
+          this.detachFromSession();
+        }
+      });
     } catch (err) {
       process.stderr.write(`Failed to attach to session "${sessionName}": ${err}\n`);
       // Revert to navigation mode
@@ -291,22 +266,26 @@ export class TUI {
   }
 
   /**
-   * Detach from the currently attached session.
-   * This is called when the TUI transitions to navigation mode.
+   * Detach from the currently attached session and restore the TUI.
+   * This is called when the user presses Escape in attached mode.
    */
   private detachFromSession(): void {
-    // In TUI mode, we don't actually call router.detach() because we never
-    // called router.attach() in the first place. We just clear our local
-    // attachment tracking.
+    // Step 1: Detach from router (restores TTY state, removes listeners)
+    if (this.routerAdapter.getActiveSession()) {
+      this.router.detach();
+    }
 
-    // If we were using router.attach() with tuiMode, we would call:
-    // if (this.routerAdapter.getActiveSession()) {
-    //   this.router.detach();
-    // }
-
-    // For now, just clear the attachment in state
+    // Step 2: Update state
     this.state.attachedSessionName = null;
     this.state.mode = 'navigation';
+
+    // Step 3: Restart update interval
+    this.updateInterval = setInterval(() => {
+      this.updateState();
+    }, 500);
+
+    // Step 4: Re-render Ink TUI
+    this.start();
   }
 }
 

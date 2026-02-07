@@ -126,6 +126,33 @@ export class SessionManager {
     return this.sessions.get(name);
   }
 
+  /**
+   * Get session info by name, checking both in-memory sessions and registry entries.
+   * Unlike getSession(), this works for sessions started by other processes.
+   */
+  getSessionInfo(name: string): SessionInfo | undefined {
+    // First check in-memory sessions (authoritative for live sessions)
+    const session = this.sessions.get(name);
+    if (session) {
+      return session.getInfo();
+    }
+
+    // Fall back to registry entries
+    const entry = this.registryEntries.get(name);
+    if (entry) {
+      return {
+        name: entry.name,
+        pid: entry.pid,
+        state: entry.state,
+        startedAt: entry.startedAt ? new Date(entry.startedAt) : null,
+        workingDirectory: entry.workingDirectory,
+        exitCode: entry.exitCode ?? null,
+      };
+    }
+
+    return undefined;
+  }
+
   listSessions(): SessionInfo[] {
     const results: SessionInfo[] = [];
     const seen = new Set<string>();
