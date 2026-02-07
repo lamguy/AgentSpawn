@@ -15,10 +15,15 @@ export function registerStartCommand(
     .command('start <name>')
     .description('Start a new agent session')
     .option('-d, --dir <path>', 'Working directory', process.cwd())
-    .action(async (name: string, options: { dir: string }) => {
+    .option('--permission-mode <mode>', 'Permission mode for Claude (bypassPermissions, acceptEdits, default, plan, delegate, dontAsk)', 'bypassPermissions')
+    .action(async (name: string, options: { dir: string; permissionMode: string }) => {
       try {
         const workingDirectory = path.resolve(options.dir);
-        const session = await manager.startSession({ name, workingDirectory });
+        const session = await manager.startSession({
+          name,
+          workingDirectory,
+          permissionMode: options.permissionMode,
+        });
         console.log(formatStatusLine(session.getInfo()));
       } catch (e) {
         if (e instanceof SessionAlreadyExistsError || e instanceof SpawnFailedError) {

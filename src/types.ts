@@ -18,6 +18,7 @@ export interface SessionConfig {
   name: string;
   workingDirectory: string;
   env?: Record<string, string>;
+  permissionMode?: string;
 }
 
 export interface SessionInfo {
@@ -29,6 +30,7 @@ export interface SessionInfo {
   exitCode?: number | null;
   /** Number of prompts sent in this session (0 if not yet interacted) */
   promptCount: number;
+  permissionMode?: string;
 }
 
 export interface RegistryEntry {
@@ -40,6 +42,7 @@ export interface RegistryEntry {
   exitCode?: number | null;
   claudeSessionId?: string;
   promptCount?: number;
+  permissionMode?: string;
 }
 
 export interface RegistryData {

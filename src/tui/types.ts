@@ -38,13 +38,15 @@ export interface SessionCreationOverlayState {
   fields: {
     name: string;
     directory: string;
+    permissionMode: string;
   };
   /** Which form field is currently focused */
-  activeField: 'name' | 'directory';
+  activeField: 'name' | 'directory' | 'permissionMode';
   /** Validation errors keyed by field name (empty string = no error) */
   errors: {
     name: string;
     directory: string;
+    permissionMode: string;
   };
   /** Whether the form submission is in progress */
   isSubmitting: boolean;
@@ -85,7 +87,7 @@ export interface StatusMessage {
  * Key handlers produce these; the orchestrator consumes them.
  */
 export type TUIAction =
-  | { kind: 'create-session'; name: string; directory: string }
+  | { kind: 'create-session'; name: string; directory: string; permissionMode: string }
   | { kind: 'stop-session'; sessionName: string }
   | { kind: 'restart-session'; sessionName: string }
   | { kind: 'stop-all' }
