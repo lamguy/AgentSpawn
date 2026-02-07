@@ -22,9 +22,12 @@ export class Session extends EventEmitter {
   constructor(
     private readonly config: SessionConfig,
     private readonly shutdownTimeoutMs: number = 5000,
+    initialSessionId?: string,
+    initialPromptCount?: number,
   ) {
     super();
-    this.claudeSessionId = crypto.randomUUID();
+    this.claudeSessionId = initialSessionId ?? crypto.randomUUID();
+    this.promptCount = initialPromptCount ?? 0;
   }
 
   async start(): Promise<void> {

@@ -259,6 +259,93 @@ describe('SessionManager', () => {
     await expect(manager.adoptSession('nonexistent')).rejects.toThrow(SessionNotFoundError);
   });
 
+  it('startSession() persists claudeSessionId in registry', async () => {
+    await manager.init();
+
+    const config: SessionConfig = {
+      name: 'persist-id-session',
+      workingDirectory: '/tmp/work',
+    };
+    const session = await manager.startSession(config);
+
+    // Read registry file directly
+    const raw = await fs.readFile(registryPath, 'utf-8');
+    const data = JSON.parse(raw);
+
+    expect(data.sessions['persist-id-session'].claudeSessionId).toBeDefined();
+    expect(data.sessions['persist-id-session'].claudeSessionId).toBe(session.getSessionId());
+  });
+
+  it('startSession() persists promptCount in registry', async () => {
+    await manager.init();
+
+    const config: SessionConfig = {
+      name: 'persist-count-session',
+      workingDirectory: '/tmp/work',
+    };
+    await manager.startSession(config);
+
+    // Read registry file directly
+    const raw = await fs.readFile(registryPath, 'utf-8');
+    const data = JSON.parse(raw);
+
+    expect(data.sessions['persist-count-session'].promptCount).toBe(0);
+  });
+
+  it('adoptSession() preserves claudeSessionId from registry', async () => {
+    const knownUUID = '99999999-9999-9999-9999-999999999999';
+    const data = {
+      version: 1,
+      sessions: {
+        'adopt-with-id': {
+          name: 'adopt-with-id',
+          pid: 0,
+          state: 'stopped',
+          startedAt: new Date().toISOString(),
+          workingDirectory: '/tmp/adopt',
+          exitCode: null,
+          claudeSessionId: knownUUID,
+          promptCount: 3,
+        },
+      },
+    };
+    const dir = path.dirname(registryPath);
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(registryPath, JSON.stringify(data, null, 2), 'utf-8');
+
+    await manager.init();
+
+    const adopted = await manager.adoptSession('adopt-with-id');
+    expect(adopted.getSessionId()).toBe(knownUUID);
+  });
+
+  it('adoptSession() preserves promptCount from registry', async () => {
+    const data = {
+      version: 1,
+      sessions: {
+        'adopt-with-count': {
+          name: 'adopt-with-count',
+          pid: 0,
+          state: 'stopped',
+          startedAt: new Date().toISOString(),
+          workingDirectory: '/tmp/adopt',
+          exitCode: null,
+          claudeSessionId: '88888888-8888-8888-8888-888888888888',
+          promptCount: 5,
+        },
+      },
+    };
+    const dir = path.dirname(registryPath);
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(registryPath, JSON.stringify(data, null, 2), 'utf-8');
+
+    await manager.init();
+
+    const adopted = await manager.adoptSession('adopt-with-count');
+    const info = adopted.getInfo();
+    expect(info.promptCount).toBe(5);
+  });
+
   describe('refreshRegistry()', () => {
     it('discovers new sessions added to registry by another process', async () => {
       await manager.init();

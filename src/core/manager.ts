@@ -53,7 +53,7 @@ export class SessionManager {
     }
   }
 
-  async startSession(config: SessionConfig): Promise<Session> {
+  async startSession(config: SessionConfig, claudeSessionId?: string, promptCount?: number): Promise<Session> {
     if (this.sessions.has(config.name)) {
       throw new SessionAlreadyExistsError(config.name);
     }
@@ -63,7 +63,7 @@ export class SessionManager {
       throw new SessionAlreadyExistsError(config.name);
     }
 
-    const session = new Session(config, this.options?.shutdownTimeoutMs);
+    const session = new Session(config, this.options?.shutdownTimeoutMs, claudeSessionId, promptCount);
     await session.start();
 
     const info = session.getInfo();
@@ -74,6 +74,8 @@ export class SessionManager {
       startedAt: info.startedAt ? info.startedAt.toISOString() : new Date().toISOString(),
       workingDirectory: info.workingDirectory,
       exitCode: info.exitCode ?? null,
+      claudeSessionId: session.getSessionId(),
+      promptCount: info.promptCount,
     };
 
     try {
@@ -162,7 +164,7 @@ export class SessionManager {
       workingDirectory: entry.workingDirectory,
     };
 
-    return this.startSession(config);
+    return this.startSession(config, entry.claudeSessionId, entry.promptCount);
   }
 
   /**

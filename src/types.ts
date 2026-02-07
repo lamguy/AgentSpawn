@@ -38,6 +38,8 @@ export interface RegistryEntry {
   startedAt: string;
   workingDirectory: string;
   exitCode?: number | null;
+  claudeSessionId?: string;
+  promptCount?: number;
 }
 
 export interface RegistryData {

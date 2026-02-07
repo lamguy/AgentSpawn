@@ -4,42 +4,28 @@ Manage multiple Claude Code instances from a single terminal. Start, stop, switc
 
 ## Screenshots
 
-### Main Help
+### Interactive TUI
 
 <p align="center">
-  <img src="docs/screenshots/help.svg" alt="agentspawn --help" width="700">
+  <img src="docs/screenshots/tui-navigation.gif" alt="TUI navigation mode with session list and output pane" width="700">
 </p>
 
-### Command Help
+### Keyboard Shortcuts
 
 <p align="center">
-  <img src="docs/screenshots/start-help.svg" alt="agentspawn start --help" width="700">
+  <img src="docs/screenshots/tui-help.gif" alt="TUI help overlay showing keybindings" width="700">
 </p>
 
+### CLI
+
 <p align="center">
-  <img src="docs/screenshots/stop-help.svg" alt="agentspawn stop --help" width="700">
+  <img src="docs/screenshots/cli-help.gif" alt="agentspawn --help" width="700">
 </p>
 
-<p align="center">
-  <img src="docs/screenshots/list-help.svg" alt="agentspawn list --help" width="700">
-</p>
-
-### Session List
+### Test Suite (268 tests)
 
 <p align="center">
-  <img src="docs/screenshots/list.svg" alt="agentspawn list" width="700">
-</p>
-
-### Error Handling
-
-<p align="center">
-  <img src="docs/screenshots/errors.svg" alt="Error handling" width="700">
-</p>
-
-### Test Suite (60 tests)
-
-<p align="center">
-  <img src="docs/screenshots/tests.svg" alt="Test suite — 60 tests passing" width="700">
+  <img src="docs/screenshots/tests.gif" alt="Test suite — 268 tests passing" width="700">
 </p>
 
 ## Install
@@ -59,14 +45,36 @@ npm link
 
 ## Quick Start
 
+### Interactive TUI (recommended)
+
+```bash
+agentspawn tui                           # Launch the interactive terminal UI
+```
+
+Then use keyboard shortcuts to manage sessions:
+
+| Key | Action |
+|-----|--------|
+| `n` | Create new session |
+| `Enter` | Attach to selected session |
+| `Esc` | Detach from session |
+| `Tab` / `j`/`k` | Navigate between sessions |
+| `x` | Stop selected session |
+| `:` | Open action menu |
+| `?` | Show help |
+| `q` | Quit |
+
+In attached mode, type prompts and press `Enter` to send them to Claude.
+
+### CLI Commands
+
 ```bash
 agentspawn start project-a                # Start a session
 agentspawn start project-b --dir ~/work   # Start with a working directory
-agentspawn list                           # See all sessions (colored table)
+agentspawn list                           # See all sessions
 agentspawn list --json                    # Machine-readable JSON output
-agentspawn exec project-a "fix the bug"   # Send a command to a session
-agentspawn switch project-a               # Attach terminal I/O (Ctrl+C to detach)
-agentspawn stop project-a                 # Gracefully stop a session
+agentspawn exec project-a "fix the bug"   # Send a prompt to a session
+agentspawn stop project-a                 # Stop a session
 agentspawn stop --all                     # Stop everything
 ```
 
@@ -74,25 +82,26 @@ agentspawn stop --all                     # Stop everything
 
 | Command | Description |
 |---------|-------------|
-| `agentspawn start <name>` | Spawn a new Claude Code child process with a name |
-| `agentspawn stop [name]` | Gracefully stop a session (SIGTERM, then SIGKILL after timeout) |
-| `agentspawn stop --all` | Stop all running sessions |
-| `agentspawn list` | Show all sessions with colored status table |
-| `agentspawn list --json` | Output session info as JSON for scripting |
-| `agentspawn exec <name> <cmd>` | Write a command to a session's stdin pipe |
-| `agentspawn switch <name>` | Attach terminal I/O to a session (Ctrl+C to detach) |
+| `agentspawn tui` | Launch interactive terminal UI for managing sessions |
+| `agentspawn start <name>` | Start a new Claude Code session |
+| `agentspawn stop [name]` | Stop a session (or `--all` to stop everything) |
+| `agentspawn list` | Show all sessions with status |
+| `agentspawn exec <name> <cmd>` | Send a prompt to a session |
+| `agentspawn switch <name>` | Attach to a session (interactive prompt mode) |
 
 Every command supports `--help` for detailed usage.
 
 ## Features
 
-- **Process isolation** — each session is a separate `child_process.spawn` with its own working directory and environment
-- **Persistent registry** — session state survives CLI restarts via `~/.agentspawn/sessions.json`
-- **Stale PID detection** — on startup, validates all registry PIDs and marks dead sessions as crashed
+- **Interactive TUI** — split-pane terminal UI with session list, output viewer, and prompt input
+- **Overlay system** — help, action menu, session creation, and confirmation dialogs
+- **Prompt-based sessions** — uses `claude --print` per prompt, keeping the TUI in control at all times
+- **Conversation persistence** — session IDs and prompt counts survive TUI restarts
+- **Cross-process discovery** — TUI polls the registry to discover sessions started by other processes
+- **Persistent registry** — session state persists via `~/.agentspawn/sessions.json`
+- **Stale PID detection** — validates registry PIDs on startup, marks dead sessions as crashed
 - **Graceful shutdown** — SIGTERM first, SIGKILL after configurable timeout (default 5s)
-- **Crash recovery** — sessions that exit unexpectedly are automatically marked as crashed
-- **I/O multiplexing** — attach/detach terminal to any running session with proper stream cleanup
-- **Colored output** — green for running, red for crashed, gray for stopped
+- **Real-time output** — streaming response display with timestamps and error highlighting
 - **Scriptable** — `--json` flag, proper exit codes (0 success, 1 user error, 2 system error)
 
 ## Development
@@ -115,18 +124,19 @@ npm install
 npm run build          # Compile TypeScript to dist/
 npm run dev            # Watch mode — rebuilds on changes
 node dist/index.js     # Run the CLI directly
+node dist/index.js tui # Launch the TUI
 ```
 
 ### Test
 
 ```bash
-npm test               # Run all 60 tests (mocked — no real Claude needed)
+npm test               # Run all 268 tests (mocked — no real Claude needed)
 ```
 
 ### Lint & Format
 
 ```bash
-npm run lint           # ESLint check (no-explicit-any enforced as error)
+npm run lint           # ESLint check
 npm run format         # Auto-format with Prettier
 npm run format:check   # Check formatting without changing files
 npm run typecheck      # TypeScript strict mode type checking
@@ -137,32 +147,39 @@ npm run typecheck      # TypeScript strict mode type checking
 ```
 src/
   cli/              Command definitions and argument parsing
-    commands/       start, stop, list, exec, switch
-    index.ts        CLI entry point — wires manager + router to commands
+    commands/       start, stop, list, exec, switch, tui
+    index.ts        CLI entry point
   core/             Session lifecycle management
-    session.ts      Spawns Claude Code, tracks PID, handles exit/crash
-    manager.ts      Orchestrates sessions, validates PIDs, persists to registry
+    session.ts      Prompt-based sessions using claude --print
+    manager.ts      Session orchestration, registry polling, adoption
     registry.ts     JSON file persistence with corruption detection
   io/               I/O multiplexing
     router.ts       Attaches/detaches terminal I/O to sessions
     formatter.ts    ANSI colored output, session table formatting
+  tui/              Interactive terminal UI (Ink + React)
+    components/     TUIApp, SessionListPane, OutputPane, StatusBar,
+                    InputBar, HelpOverlay, ActionMenu, dialogs
+    keybindings.ts  Mode-aware keyboard dispatch
+    output-capture.ts  EventEmitter-based output streaming
+    overlay-helpers.ts Overlay stack management
+    types.ts        TUI state, actions, overlay types
   config/           Configuration defaults and validation
   utils/            Custom error hierarchy and structured logging
-  types.ts          Shared TypeScript interfaces (SessionHandle, SessionInfo, etc.)
+  types.ts          Shared TypeScript interfaces
 tests/
-  integration/      End-to-end scaffold tests
+  integration/      TUI integration tests
 ```
 
 ## Architecture
 
-Each Claude Code session runs as an isolated child process spawned via `child_process.spawn('claude')` with piped stdio. A registry file at `~/.agentspawn/sessions.json` persists session metadata across CLI invocations. On startup, the manager validates stored PIDs and marks dead ones as crashed.
+Sessions use `claude --print` per prompt instead of persistent child processes. Conversation continuity is maintained via `--session-id` (first prompt) and `--resume` (subsequent prompts) flags. The TUI stays mounted at all times.
 
 ```
-agentspawn start  ──> SessionManager.startSession() ──> spawn("claude") + Registry.addEntry()
-agentspawn stop   ──> SessionManager.stopSession()  ──> SIGTERM → 5s → SIGKILL + Registry.removeEntry()
-agentspawn list   ──> SessionManager.listSessions()  ──> in-memory + Registry merge
-agentspawn exec   ──> Session.getHandle().stdin.write() ──> piped to child process
-agentspawn switch ──> Router.attach()                ──> terminal ↔ session I/O bridge
+agentspawn tui    ──> TUI (Ink/React) ──> SessionManager ──> claude --print per prompt
+agentspawn start  ──> SessionManager.startSession() ──> Registry.addEntry()
+agentspawn stop   ──> SessionManager.stopSession()  ──> Registry.removeEntry()
+agentspawn list   ──> SessionManager.listSessions() ──> in-memory + Registry merge
+agentspawn exec   ──> Session.sendPrompt()          ──> spawn claude --print
 ```
 
 ### Session Lifecycle
@@ -174,6 +191,15 @@ STOPPED ──start()──> RUNNING ──stop()──> STOPPED
                         │
                         ▼
                      CRASHED
+```
+
+### TUI Modes
+
+```
+NAVIGATION ──Enter──> ATTACHED ──Esc──> NAVIGATION
+     │                    │
+     └── overlays ────────┘
+         (help, action menu, dialogs)
 ```
 
 ## License
