@@ -12,6 +12,7 @@ describe('SessionListPane', () => {
       state: SessionState.Running,
       startedAt: new Date(Date.now() - 23 * 60 * 1000), // 23 minutes ago
       workingDirectory: '/home/user/project-a',
+      promptCount: 3,
     },
     {
       name: 'project-b',
@@ -19,6 +20,7 @@ describe('SessionListPane', () => {
       state: SessionState.Running,
       startedAt: new Date(Date.now() - 90 * 60 * 1000), // 90 minutes ago
       workingDirectory: '/home/user/project-b',
+      promptCount: 7,
     },
     {
       name: 'project-c',
@@ -26,6 +28,7 @@ describe('SessionListPane', () => {
       state: SessionState.Stopped,
       startedAt: null,
       workingDirectory: '/home/user/project-c',
+      promptCount: 0,
     },
     {
       name: 'project-d',
@@ -34,6 +37,7 @@ describe('SessionListPane', () => {
       startedAt: new Date(Date.now() - 5 * 60 * 1000),
       workingDirectory: '/home/user/project-d',
       exitCode: 1,
+      promptCount: 1,
     },
   ];
 
@@ -90,6 +94,7 @@ describe('SessionListPane', () => {
         state: SessionState.Running,
         startedAt: new Date(now - 45 * 1000), // 45 seconds
         workingDirectory: '/tmp/short',
+        promptCount: 0,
       },
       {
         name: 'minutes',
@@ -97,6 +102,7 @@ describe('SessionListPane', () => {
         state: SessionState.Running,
         startedAt: new Date(now - 23 * 60 * 1000), // 23 minutes
         workingDirectory: '/tmp/minutes',
+        promptCount: 0,
       },
       {
         name: 'hours',
@@ -104,6 +110,7 @@ describe('SessionListPane', () => {
         state: SessionState.Running,
         startedAt: new Date(now - 90 * 60 * 1000), // 1.5 hours
         workingDirectory: '/tmp/hours',
+        promptCount: 0,
       },
       {
         name: 'days',
@@ -111,6 +118,7 @@ describe('SessionListPane', () => {
         state: SessionState.Running,
         startedAt: new Date(now - 50 * 60 * 60 * 1000), // 50 hours
         workingDirectory: '/tmp/days',
+        promptCount: 0,
       },
     ];
 
@@ -128,6 +136,7 @@ describe('SessionListPane', () => {
       state: SessionState.Running,
       startedAt: new Date(),
       workingDirectory: `/tmp/session-${i}`,
+      promptCount: 0,
     }));
 
     expect(manySessions.length).toBe(25);
@@ -168,6 +177,7 @@ describe('SessionListPane', () => {
         state: SessionState.Stopped,
         startedAt: null,
         workingDirectory: '/tmp/no-start',
+        promptCount: 0,
       },
     ];
 

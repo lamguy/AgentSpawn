@@ -1,4 +1,20 @@
-import type { TUIState } from './types.js';
+import type {
+  TUIState,
+  TUIAction,
+  OverlayState,
+  ActionMenuOverlayState,
+  SessionCreationOverlayState,
+  ConfirmationOverlayState,
+  HelpOverlayState,
+  ActionMenuItem,
+  ConfirmableAction,
+} from './types.js';
+import {
+  topOverlay,
+  popOverlay,
+  pushOverlay,
+  replaceTopOverlay,
+} from './overlay-helpers.js';
 
 /**
  * Key code constants for terminal input.
@@ -12,261 +28,512 @@ export const KEY_CODES = {
   ENTER: '\r',
   ESCAPE: '\x1b',
   CTRL_C: '\x03',
+  CTRL_A: '\x01',
+  BACKSPACE: '\x7f',
   LOWERCASE_Q: 'q',
   LOWERCASE_N: 'n',
   LOWERCASE_X: 'x',
+  LOWERCASE_Y: 'y',
   QUESTION_MARK: '?',
 } as const;
 
 /**
  * Result type for key handlers.
- * Either returns updated state or a quit signal.
+ * Discriminated union supporting pure state updates, quit, or state + side effect.
  */
-export type KeyHandlerResult = TUIState | { quit: true };
+export type KeyHandlerResult =
+  | { kind: 'state'; state: TUIState }
+  | { kind: 'quit' }
+  | { kind: 'action'; state: TUIState; action: TUIAction };
 
-/**
- * Key binding definition.
- */
-export interface KeyBinding {
-  /** The key code that triggers this binding */
-  key: string;
-  /** Human-readable description for help text */
-  description: string;
-  /** Handler function that processes the key press */
-  handler: (state: TUIState) => KeyHandlerResult;
+// ── Helper: wrap a state into a KeyHandlerResult ─────────────────────────────
+
+function stateResult(state: TUIState): KeyHandlerResult {
+  return { kind: 'state', state };
 }
 
-/**
- * Key handler function type.
- * Takes current state and raw key input, returns new state or quit signal.
- */
-export type KeyHandler = (state: TUIState, key: string) => KeyHandlerResult;
+function quitResult(): KeyHandlerResult {
+  return { kind: 'quit' };
+}
 
-/**
- * Cycle to the next session in the list.
- * Wraps around to the first session when reaching the end.
- */
-function handleNextSession(state: TUIState): TUIState {
-  if (state.sessions.length === 0) {
-    return state;
-  }
+function actionResult(state: TUIState, action: TUIAction): KeyHandlerResult {
+  return { kind: 'action', state, action };
+}
 
+// ── Session navigation helpers ───────────────────────────────────────────────
+
+function selectNextSession(state: TUIState): TUIState {
+  if (state.sessions.length === 0) return state;
   const currentIndex = state.sessions.findIndex(
     (s) => s.name === state.selectedSessionName,
   );
-
   const nextIndex =
-    currentIndex === -1
-      ? 0 // No selection, select first
-      : (currentIndex + 1) % state.sessions.length; // Wrap around
-
-  return {
-    ...state,
-    selectedSessionName: state.sessions[nextIndex].name,
-  };
+    currentIndex === -1 ? 0 : (currentIndex + 1) % state.sessions.length;
+  return { ...state, selectedSessionName: state.sessions[nextIndex].name };
 }
 
-/**
- * Cycle to the previous session in the list.
- * Wraps around to the last session when reaching the start.
- */
-function handlePreviousSession(state: TUIState): TUIState {
-  if (state.sessions.length === 0) {
-    return state;
-  }
-
+function selectPreviousSession(state: TUIState): TUIState {
+  if (state.sessions.length === 0) return state;
   const currentIndex = state.sessions.findIndex(
     (s) => s.name === state.selectedSessionName,
   );
-
   const previousIndex =
     currentIndex === -1
-      ? state.sessions.length - 1 // No selection, select last
+      ? state.sessions.length - 1
       : currentIndex === 0
-        ? state.sessions.length - 1 // At start, wrap to end
+        ? state.sessions.length - 1
         : currentIndex - 1;
-
-  return {
-    ...state,
-    selectedSessionName: state.sessions[previousIndex].name,
-  };
+  return { ...state, selectedSessionName: state.sessions[previousIndex].name };
 }
 
-/**
- * Move selection up in the session list.
- * Same as previous session (sessions are displayed top to bottom).
- */
-function handleUpArrow(state: TUIState): TUIState {
-  return handlePreviousSession(state);
+// ── Action menu items ────────────────────────────────────────────────────────
+
+function getActionMenuItems(state: TUIState): ActionMenuItem[] {
+  const hasSelected = state.selectedSessionName !== null;
+  const selectedSession = hasSelected
+    ? state.sessions.find((s) => s.name === state.selectedSessionName)
+    : undefined;
+  const hasSelectedRunning = selectedSession?.state === 'running';
+  const hasRunningSessions = state.sessions.some((s) => s.state === 'running');
+
+  return [
+    {
+      id: 'new-session',
+      label: 'New Session',
+      description: 'Create a new Claude session',
+      shortcut: 'n',
+      enabled: true,
+    },
+    {
+      id: 'stop-session',
+      label: 'Stop Session',
+      description: 'Stop the selected session',
+      shortcut: 'x',
+      enabled: hasSelected && hasSelectedRunning === true,
+    },
+    {
+      id: 'stop-all',
+      label: 'Stop All',
+      description: 'Stop all running sessions',
+      enabled: hasRunningSessions,
+    },
+    {
+      id: 'help',
+      label: 'Help',
+      description: 'Show keyboard shortcuts',
+      shortcut: '?',
+      enabled: true,
+    },
+    {
+      id: 'quit',
+      label: 'Quit',
+      description: 'Exit AgentSpawn',
+      shortcut: 'q',
+      enabled: true,
+    },
+  ];
 }
 
-/**
- * Move selection down in the session list.
- * Same as next session (sessions are displayed top to bottom).
- */
-function handleDownArrow(state: TUIState): TUIState {
-  return handleNextSession(state);
-}
+// ── Navigation mode handler ──────────────────────────────────────────────────
 
-/**
- * Attach to the selected session.
- * Placeholder implementation — actual attachment happens via router.
- */
-function handleAttach(state: TUIState): TUIState {
-  // TODO: Implement actual attachment via router
-  // For now, just mark the selected session as attached in state
-  if (!state.selectedSessionName) {
-    return state;
+export function handleNavigationKeypress(
+  state: TUIState,
+  key: string,
+): KeyHandlerResult {
+  switch (key) {
+    case KEY_CODES.TAB:
+    case KEY_CODES.DOWN_ARROW:
+      return stateResult(selectNextSession(state));
+
+    case KEY_CODES.SHIFT_TAB:
+    case KEY_CODES.UP_ARROW:
+      return stateResult(selectPreviousSession(state));
+
+    case KEY_CODES.ENTER: {
+      if (!state.selectedSessionName) return stateResult(state);
+      return stateResult({
+        ...state,
+        attachedSessionName: state.selectedSessionName,
+        mode: 'attached',
+      });
+    }
+
+    case KEY_CODES.LOWERCASE_N:
+      return stateResult(
+        pushOverlay(state, {
+          kind: 'session-creation',
+          fields: { name: '', directory: '.' },
+          activeField: 'name',
+          errors: { name: '', directory: '' },
+          isSubmitting: false,
+        }),
+      );
+
+    case KEY_CODES.LOWERCASE_X: {
+      if (!state.selectedSessionName) return stateResult(state);
+      return stateResult(
+        pushOverlay(state, {
+          kind: 'confirmation',
+          title: `Stop session "${state.selectedSessionName}"?`,
+          message: 'This will send SIGTERM to the running process.',
+          action: {
+            kind: 'stop-session',
+            sessionName: state.selectedSessionName,
+          },
+        }),
+      );
+    }
+
+    case KEY_CODES.CTRL_A:
+      return stateResult(
+        pushOverlay(state, {
+          kind: 'action-menu',
+          selectedIndex: 0,
+          targetSessionName: state.selectedSessionName,
+        }),
+      );
+
+    case KEY_CODES.QUESTION_MARK:
+      return stateResult(
+        pushOverlay(state, { kind: 'help', scrollOffset: 0 }),
+      );
+
+    case KEY_CODES.LOWERCASE_Q:
+    case KEY_CODES.CTRL_C:
+      return quitResult();
+
+    default:
+      return stateResult(state);
   }
-
-  return {
-    ...state,
-    attachedSessionName: state.selectedSessionName,
-    mode: 'attached', // Switch to attached mode
-  };
 }
 
-/**
- * Detach from the currently attached session.
- * Returns to navigation mode where TUI shortcuts are active.
- */
-function handleDetach(state: TUIState): TUIState {
-  // TODO: Implement actual detachment via router
-  return {
-    ...state,
-    attachedSessionName: null,
-    mode: 'navigation', // Switch to navigation mode
-  };
+// ── Attached mode handler ────────────────────────────────────────────────────
+
+export function handleAttachedKeypress(
+  state: TUIState,
+  key: string,
+): KeyHandlerResult {
+  if (key === KEY_CODES.ESCAPE) {
+    return stateResult({
+      ...state,
+      attachedSessionName: null,
+      mode: 'navigation',
+    });
+  }
+  // All other keys are handled by InputBar, not by keybinding dispatch
+  return stateResult(state);
 }
 
-/**
- * Quit the TUI.
- * Returns a special quit signal.
- */
-function handleQuit(_state: TUIState): { quit: true } {
-  return { quit: true };
+// ── Help overlay handler ─────────────────────────────────────────────────────
+
+export function handleHelpKeypress(
+  state: TUIState,
+  _overlay: HelpOverlayState,
+  key: string,
+): KeyHandlerResult {
+  switch (key) {
+    case KEY_CODES.ESCAPE:
+    case KEY_CODES.QUESTION_MARK:
+      return stateResult(popOverlay(state));
+
+    case KEY_CODES.UP_ARROW:
+      return stateResult(
+        replaceTopOverlay(state, {
+          ..._overlay,
+          scrollOffset: Math.max(0, _overlay.scrollOffset - 1),
+        }),
+      );
+
+    case KEY_CODES.DOWN_ARROW:
+      return stateResult(
+        replaceTopOverlay(state, {
+          ..._overlay,
+          scrollOffset: _overlay.scrollOffset + 1,
+        }),
+      );
+
+    default:
+      return stateResult(state);
+  }
 }
 
-/**
- * Create a new session.
- * Placeholder implementation — will be implemented later.
- */
-function handleNewSession(state: TUIState): TUIState {
-  // TODO: Implement session creation flow
-  return state;
+// ── Action menu handler ──────────────────────────────────────────────────────
+
+export function handleActionMenuKeypress(
+  state: TUIState,
+  overlay: ActionMenuOverlayState,
+  key: string,
+): KeyHandlerResult {
+  const items = getActionMenuItems(state);
+
+  switch (key) {
+    case KEY_CODES.ESCAPE:
+      return stateResult(popOverlay(state));
+
+    case KEY_CODES.UP_ARROW: {
+      const newIndex =
+        overlay.selectedIndex <= 0
+          ? items.length - 1
+          : overlay.selectedIndex - 1;
+      return stateResult(
+        replaceTopOverlay(state, { ...overlay, selectedIndex: newIndex }),
+      );
+    }
+
+    case KEY_CODES.DOWN_ARROW: {
+      const newIndex =
+        overlay.selectedIndex >= items.length - 1
+          ? 0
+          : overlay.selectedIndex + 1;
+      return stateResult(
+        replaceTopOverlay(state, { ...overlay, selectedIndex: newIndex }),
+      );
+    }
+
+    case KEY_CODES.ENTER: {
+      const selectedItem = items[overlay.selectedIndex];
+      if (!selectedItem || !selectedItem.enabled) return stateResult(state);
+      return executeMenuItem(state, selectedItem);
+    }
+
+    default:
+      return stateResult(state);
+  }
 }
 
-/**
- * Stop the selected session.
- * Placeholder implementation — will be implemented later.
- */
-function handleStopSession(state: TUIState): TUIState {
-  // TODO: Implement session stop via manager
-  return state;
+function executeMenuItem(
+  state: TUIState,
+  item: ActionMenuItem,
+): KeyHandlerResult {
+  const popped = popOverlay(state);
+
+  switch (item.id) {
+    case 'new-session':
+      return stateResult(
+        pushOverlay(popped, {
+          kind: 'session-creation',
+          fields: { name: '', directory: '.' },
+          activeField: 'name',
+          errors: { name: '', directory: '' },
+          isSubmitting: false,
+        }),
+      );
+
+    case 'stop-session': {
+      if (!state.selectedSessionName) return stateResult(popped);
+      return stateResult(
+        pushOverlay(popped, {
+          kind: 'confirmation',
+          title: `Stop session "${state.selectedSessionName}"?`,
+          message: 'This will send SIGTERM to the running process.',
+          action: {
+            kind: 'stop-session',
+            sessionName: state.selectedSessionName,
+          },
+        }),
+      );
+    }
+
+    case 'stop-all':
+      return stateResult(
+        pushOverlay(popped, {
+          kind: 'confirmation',
+          title: `Stop all ${state.sessions.filter((s) => s.state === 'running').length} sessions?`,
+          message: 'This will send SIGTERM to all running processes.',
+          action: { kind: 'stop-all' },
+        }),
+      );
+
+    case 'help':
+      return stateResult(
+        pushOverlay(popped, { kind: 'help', scrollOffset: 0 }),
+      );
+
+    case 'quit':
+      return quitResult();
+
+    default:
+      return stateResult(popped);
+  }
 }
 
-/**
- * Toggle help overlay.
- * Placeholder implementation — will be implemented later.
- */
-function handleToggleHelp(state: TUIState): TUIState {
-  // TODO: Implement help overlay toggle
-  return state;
+// ── Session creation handler ─────────────────────────────────────────────────
+
+export function handleSessionCreationKeypress(
+  state: TUIState,
+  overlay: SessionCreationOverlayState,
+  key: string,
+): KeyHandlerResult {
+  switch (key) {
+    case KEY_CODES.ESCAPE:
+      return stateResult(popOverlay(state));
+
+    case KEY_CODES.TAB:
+      return stateResult(
+        replaceTopOverlay(state, {
+          ...overlay,
+          activeField: overlay.activeField === 'name' ? 'directory' : 'name',
+        }),
+      );
+
+    case KEY_CODES.SHIFT_TAB:
+      return stateResult(
+        replaceTopOverlay(state, {
+          ...overlay,
+          activeField: overlay.activeField === 'name' ? 'directory' : 'name',
+        }),
+      );
+
+    case KEY_CODES.ENTER: {
+      // Validate
+      const errors = { name: '', directory: '' };
+      const trimmedName = overlay.fields.name.trim();
+
+      if (!trimmedName) {
+        errors.name = 'Name is required';
+      } else if (state.sessions.some((s) => s.name === trimmedName)) {
+        errors.name = `Session "${trimmedName}" already exists`;
+      }
+
+      if (errors.name) {
+        return stateResult(
+          replaceTopOverlay(state, { ...overlay, errors }),
+        );
+      }
+
+      // Valid: pop overlay, mark submitting, return action
+      const submitting = replaceTopOverlay(state, {
+        ...overlay,
+        isSubmitting: true,
+        errors,
+      });
+      const popped = popOverlay(submitting);
+      return actionResult(popped, {
+        kind: 'create-session',
+        name: trimmedName,
+        directory: overlay.fields.directory || '.',
+      });
+    }
+
+    case KEY_CODES.BACKSPACE: {
+      const field = overlay.activeField;
+      const currentValue = overlay.fields[field];
+      if (currentValue.length === 0) return stateResult(state);
+      return stateResult(
+        replaceTopOverlay(state, {
+          ...overlay,
+          fields: {
+            ...overlay.fields,
+            [field]: currentValue.slice(0, -1),
+          },
+          errors: { ...overlay.errors, [field]: '' },
+        }),
+      );
+    }
+
+    default: {
+      // Only accept printable single characters for text input
+      if (key.length === 1 && key >= ' ' && key <= '~') {
+        const field = overlay.activeField;
+        return stateResult(
+          replaceTopOverlay(state, {
+            ...overlay,
+            fields: {
+              ...overlay.fields,
+              [field]: overlay.fields[field] + key,
+            },
+            errors: { ...overlay.errors, [field]: '' },
+          }),
+        );
+      }
+      return stateResult(state);
+    }
+  }
 }
 
-/**
- * All supported key bindings.
- * This map defines the complete keyboard navigation system.
- */
-export const KEY_BINDINGS: Record<string, KeyBinding> = {
-  [KEY_CODES.TAB]: {
-    key: 'Tab',
-    description: 'Switch to next session',
-    handler: handleNextSession,
-  },
-  [KEY_CODES.SHIFT_TAB]: {
-    key: 'Shift+Tab',
-    description: 'Switch to previous session',
-    handler: handlePreviousSession,
-  },
-  [KEY_CODES.UP_ARROW]: {
-    key: '↑',
-    description: 'Move selection up',
-    handler: handleUpArrow,
-  },
-  [KEY_CODES.DOWN_ARROW]: {
-    key: '↓',
-    description: 'Move selection down',
-    handler: handleDownArrow,
-  },
-  [KEY_CODES.ENTER]: {
-    key: 'Enter',
-    description: 'Attach to selected session',
-    handler: handleAttach,
-  },
-  [KEY_CODES.ESCAPE]: {
-    key: 'Esc',
-    description: 'Detach from session',
-    handler: handleDetach,
-  },
-  [KEY_CODES.LOWERCASE_Q]: {
-    key: 'q',
-    description: 'Quit',
-    handler: handleQuit,
-  },
-  [KEY_CODES.CTRL_C]: {
-    key: 'Ctrl+C',
-    description: 'Quit',
-    handler: handleQuit,
-  },
-  [KEY_CODES.LOWERCASE_N]: {
-    key: 'n',
-    description: 'New session (coming soon)',
-    handler: handleNewSession,
-  },
-  [KEY_CODES.LOWERCASE_X]: {
-    key: 'x',
-    description: 'Stop selected session (coming soon)',
-    handler: handleStopSession,
-  },
-  [KEY_CODES.QUESTION_MARK]: {
-    key: '?',
-    description: 'Toggle help (coming soon)',
-    handler: handleToggleHelp,
-  },
-};
+// ── Confirmation handler ─────────────────────────────────────────────────────
+
+export function handleConfirmationKeypress(
+  state: TUIState,
+  overlay: ConfirmationOverlayState,
+  key: string,
+): KeyHandlerResult {
+  switch (key) {
+    case KEY_CODES.LOWERCASE_Y:
+    case KEY_CODES.ENTER: {
+      const popped = popOverlay(state);
+      return confirmableActionToResult(popped, overlay.action);
+    }
+
+    case KEY_CODES.LOWERCASE_N:
+    case KEY_CODES.ESCAPE:
+      return stateResult(popOverlay(state));
+
+    default:
+      return stateResult(state);
+  }
+}
+
+function confirmableActionToResult(
+  state: TUIState,
+  action: ConfirmableAction,
+): KeyHandlerResult {
+  switch (action.kind) {
+    case 'stop-session':
+      return actionResult(state, {
+        kind: 'stop-session',
+        sessionName: action.sessionName,
+      });
+    case 'restart-session':
+      return actionResult(state, {
+        kind: 'restart-session',
+        sessionName: action.sessionName,
+      });
+    case 'stop-all':
+      return actionResult(state, { kind: 'stop-all' });
+  }
+}
+
+// ── Overlay dispatch ─────────────────────────────────────────────────────────
+
+function handleOverlayKeypress(
+  state: TUIState,
+  overlay: OverlayState,
+  key: string,
+): KeyHandlerResult {
+  switch (overlay.kind) {
+    case 'help':
+      return handleHelpKeypress(state, overlay, key);
+    case 'action-menu':
+      return handleActionMenuKeypress(state, overlay, key);
+    case 'session-creation':
+      return handleSessionCreationKeypress(state, overlay, key);
+    case 'confirmation':
+      return handleConfirmationKeypress(state, overlay, key);
+  }
+}
+
+// ── Main dispatch function ───────────────────────────────────────────────────
 
 /**
  * Main key press handler.
- * Routes raw key input to the appropriate handler based on key bindings.
- *
- * In attached mode, only Esc is processed (to detach). All other keys are ignored
- * so they can be forwarded to the attached session.
- *
- * In navigation mode, all key bindings are active.
- *
- * @param state - Current TUI state
- * @param key - Raw key input from terminal
- * @returns Updated state or quit signal
+ * Checks overlay stack first (topmost overlay captures all input),
+ * then falls back to base mode handler.
  */
-export const handleKeypress: KeyHandler = (state, key) => {
-  // In attached mode, only allow Esc to detach
-  // All other keys should be forwarded to the session (handled by Router)
-  if (state.mode === 'attached') {
-    if (key === KEY_CODES.ESCAPE) {
-      return handleDetach(state);
-    }
-    // Ignore all other keys — they'll be forwarded to the session
-    return state;
+export function handleKeypress(
+  state: TUIState,
+  key: string,
+): KeyHandlerResult {
+  const overlay = topOverlay(state);
+
+  if (overlay) {
+    return handleOverlayKeypress(state, overlay, key);
   }
 
-  // In navigation mode, process all key bindings
-  const binding = KEY_BINDINGS[key];
-
-  if (binding) {
-    return binding.handler(state);
+  switch (state.mode) {
+    case 'navigation':
+      return handleNavigationKeypress(state, key);
+    case 'attached':
+      return handleAttachedKeypress(state, key);
   }
-
-  // Unknown key — ignore
-  return state;
-};
+}

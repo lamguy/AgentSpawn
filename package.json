@@ -7,8 +7,8 @@
     "agentspawn": "dist/index.js"
   },
   "scripts": {
-    "build": "tsup src/index.ts --format esm --dts",
-    "dev": "tsup src/index.ts --format esm --watch",
+    "build": "tsup src/index.ts src/lib.ts --format esm --dts",
+    "dev": "tsup src/index.ts src/lib.ts --format esm --watch",
     "test": "vitest run",
     "lint": "eslint src/",
     "format": "prettier --write src/",

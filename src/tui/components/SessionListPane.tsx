@@ -14,9 +14,20 @@ export interface SessionListPaneProps {
   maxVisible?: number;
 }
 
+/** Status symbol and color per session state */
+const STATUS_CONFIG: Record<
+  SessionState,
+  { symbol: string; color: string }
+> = {
+  [SessionState.Running]: { symbol: '\u25CF', color: 'green' },   // ●
+  [SessionState.Stopped]: { symbol: '\u25CB', color: 'gray' },    // ○
+  [SessionState.Crashed]: { symbol: '\u25B2', color: 'red' },     // ▲
+};
+
 /**
  * Session list pane component.
- * Displays all sessions with status indicators, cursor navigation, and scrolling support.
+ * Displays all sessions with Unicode status symbols, card-like rows,
+ * expanded details for the selected session, and scroll indicators.
  */
 export function SessionListPane({
   sessions,
@@ -27,9 +38,13 @@ export function SessionListPane({
   // Handle empty state
   if (sessions.length === 0) {
     return (
-      <Box flexDirection="column" paddingLeft={1}>
-        <Text bold>Sessions</Text>
-        <Text dimColor>No sessions</Text>
+      <Box flexDirection="column" paddingX={1}>
+        <Box flexDirection="row" justifyContent="space-between">
+          <Text bold>Sessions</Text>
+        </Box>
+        <Box marginTop={1}>
+          <Text dimColor>No sessions. Press n to create one.</Text>
+        </Box>
       </Box>
     );
   }
@@ -38,39 +53,74 @@ export function SessionListPane({
   const selectedIndex = sessions.findIndex((s) => s.name === selectedSessionName);
   const scrollOffset = Math.max(0, selectedIndex - maxVisible + 1);
   const visibleSessions = sessions.slice(scrollOffset, scrollOffset + maxVisible);
+  const hasMoreAbove = scrollOffset > 0;
+  const hasMoreBelow = scrollOffset + maxVisible < sessions.length;
 
   return (
-    <Box flexDirection="column" paddingLeft={1}>
-      <Text bold>Sessions</Text>
+    <Box flexDirection="column" paddingX={1}>
+      {/* Pane title with session count */}
+      <Box flexDirection="row" justifyContent="space-between">
+        <Text bold>Sessions</Text>
+        <Text dimColor>{sessions.length}</Text>
+      </Box>
+
       <Box flexDirection="column" marginTop={1}>
+        {/* Scroll-up indicator */}
+        {hasMoreAbove && (
+          <Text dimColor>  ... {scrollOffset} more above</Text>
+        )}
+
         {visibleSessions.map((session) => {
           const isSelected = session.name === selectedSessionName;
           const isAttached = session.name === attachedSessionName;
-          const cursor = isSelected ? '>' : ' ';
+          const status = STATUS_CONFIG[session.state] ?? STATUS_CONFIG[SessionState.Stopped];
 
           return (
-            <Box key={session.name} flexDirection="column" marginBottom={0}>
-              {/* Session name line with cursor and status */}
+            <Box key={session.name} flexDirection="column">
+              {/* Session row: cursor + name + status symbol */}
               <Box flexDirection="row">
-                <Text>{cursor} </Text>
-                <Text bold={isSelected} color={isAttached ? 'cyan' : undefined}>
+                {/* Cursor */}
+                <Text bold color="cyan">{isSelected ? '> ' : '  '}</Text>
+
+                {/* Session name */}
+                <Text
+                  bold={isSelected}
+                  color={isAttached ? 'magenta' : isSelected ? 'cyan' : undefined}
+                >
                   {session.name}
                 </Text>
-                <Text> </Text>
-                <StatusBadge state={session.state} />
+
+                {/* Spacer */}
+                <Text>{' '}</Text>
+
+                {/* Status symbol */}
+                <Text color={status.color}>{status.symbol}</Text>
               </Box>
 
-              {/* Session details (only when selected) */}
+              {/* Expanded details for selected session */}
               {isSelected && (
-                <Box flexDirection="column" marginLeft={2} marginTop={0}>
-                  <Text dimColor>• {session.workingDirectory}</Text>
+                <Box flexDirection="column" marginLeft={3}>
+                  {/* Working directory */}
+                  <Text dimColor>{session.workingDirectory}</Text>
+
+                  {/* PID and uptime (for running sessions) */}
                   {session.state === SessionState.Running && session.pid > 0 && (
                     <Text dimColor>
-                      • PID {session.pid} • {formatUptime(session.startedAt)}
+                      PID {session.pid}  {formatUptime(session.startedAt)}
                     </Text>
                   )}
-                  {session.state === SessionState.Crashed && session.exitCode !== null && (
-                    <Text dimColor>• Exit code: {session.exitCode}</Text>
+
+                  {/* Prompt count */}
+                  <Text dimColor>Prompts: {session.promptCount ?? 0}</Text>
+
+                  {/* Exit code for crashed sessions */}
+                  {session.state === SessionState.Crashed && session.exitCode != null && (
+                    <Text dimColor>Exit code: {session.exitCode}</Text>
+                  )}
+
+                  {/* Attached indicator */}
+                  {isAttached && (
+                    <Text bold color="magenta">ATTACHED</Text>
                   )}
                 </Box>
               )}
@@ -78,45 +128,15 @@ export function SessionListPane({
           );
         })}
 
-        {/* Scroll indicator */}
-        {sessions.length > maxVisible && (
+        {/* Scroll-down indicator */}
+        {hasMoreBelow && (
           <Text dimColor>
-            ({scrollOffset + visibleSessions.length}/{sessions.length})
+            {'  '}... {sessions.length - scrollOffset - maxVisible} more below
           </Text>
         )}
       </Box>
     </Box>
   );
-}
-
-/**
- * Status badge component with color coding.
- */
-function StatusBadge({ state }: { state: SessionState }): React.ReactElement {
-  const statusConfig = getStatusConfig(state);
-
-  return <Text color={statusConfig.color}>[{statusConfig.label}]</Text>;
-}
-
-/**
- * Get status configuration for a given session state.
- * Uses Claude Code semantic color system.
- */
-function getStatusConfig(state: SessionState): {
-  label: string;
-  color: 'green' | 'gray' | 'red' | 'yellow';
-} {
-  switch (state) {
-    case SessionState.Running:
-      return { label: 'running', color: 'green' };
-    case SessionState.Stopped:
-      return { label: 'stopped', color: 'gray' };
-    case SessionState.Crashed:
-      return { label: 'crashed', color: 'red' };
-    default:
-      // Fallback for any future states (e.g., "starting")
-      return { label: 'starting', color: 'yellow' };
-  }
 }
 
 /**

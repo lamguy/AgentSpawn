@@ -12,77 +12,88 @@ describe('OutputPane', () => {
       <OutputPane session={null} outputLines={[]} />,
     );
 
-    expect(lastFrame()).toContain('No session attached');
+    expect(lastFrame()).toContain('Select a session to view output');
+    expect(lastFrame()).toContain('or press n to create a new one');
   });
 
-  it('renders session header with name', () => {
+  it('renders session header with name and status', () => {
     const mockSession: SessionInfo = {
       name: 'test-session',
       pid: 12345,
       state: SessionState.Running,
       startedAt: new Date(),
       workingDirectory: '/test',
+      promptCount: 0,
     };
 
     const { lastFrame } = render(
       <OutputPane session={mockSession} outputLines={[]} />,
     );
 
-    expect(lastFrame()).toContain('> test-session');
+    expect(lastFrame()).toContain('Output:');
+    expect(lastFrame()).toContain('test-session');
+    expect(lastFrame()).toContain('running');
   });
 
-  it('shows spinner for running sessions', () => {
+  it('shows status symbol for running sessions', () => {
     const mockSession: SessionInfo = {
       name: 'test-session',
       pid: 12345,
       state: SessionState.Running,
       startedAt: new Date(),
       workingDirectory: '/test',
+      promptCount: 0,
     };
 
     const { lastFrame } = render(
       <OutputPane session={mockSession} outputLines={[]} />,
     );
 
-    expect(lastFrame()).toContain('⏹');
+    // Running uses filled circle
+    expect(lastFrame()).toContain('\u25CF');
   });
 
-  it('does not show spinner for stopped sessions', () => {
+  it('shows stopped status for stopped sessions', () => {
     const mockSession: SessionInfo = {
       name: 'test-session',
       pid: 12345,
       state: SessionState.Stopped,
       startedAt: new Date(),
       workingDirectory: '/test',
+      promptCount: 0,
     };
 
     const { lastFrame } = render(
       <OutputPane session={mockSession} outputLines={[]} />,
     );
 
-    expect(lastFrame()).not.toContain('⏹');
+    expect(lastFrame()).toContain('stopped');
+    // Stopped uses empty circle
+    expect(lastFrame()).toContain('\u25CB');
   });
 
-  it('renders output lines', () => {
+  it('renders output lines with timestamps', () => {
     const mockSession: SessionInfo = {
       name: 'test-session',
       pid: 12345,
       state: SessionState.Running,
       startedAt: new Date(),
       workingDirectory: '/test',
+      promptCount: 0,
     };
 
+    const timestamp = new Date(2025, 0, 1, 14, 32);
     const mockOutputLines: OutputLine[] = [
       {
         sessionName: 'test-session',
         text: 'Line 1',
-        timestamp: new Date(),
+        timestamp,
         isError: false,
       },
       {
         sessionName: 'test-session',
         text: 'Line 2',
-        timestamp: new Date(),
+        timestamp,
         isError: false,
       },
     ];
@@ -93,43 +104,41 @@ describe('OutputPane', () => {
 
     expect(lastFrame()).toContain('Line 1');
     expect(lastFrame()).toContain('Line 2');
+    expect(lastFrame()).toContain('14:32');
   });
 
-  it('shows "No output yet" when session has no output', () => {
+  it('shows informative empty state when session has no output', () => {
     const mockSession: SessionInfo = {
       name: 'test-session',
       pid: 12345,
       state: SessionState.Running,
       startedAt: new Date(),
       workingDirectory: '/test',
+      promptCount: 0,
     };
 
     const { lastFrame } = render(
       <OutputPane session={mockSession} outputLines={[]} />,
     );
 
-    expect(lastFrame()).toContain('No output yet...');
+    expect(lastFrame()).toContain('test-session - No output yet');
+    expect(lastFrame()).toContain('Press Enter to attach and send prompts');
   });
 
-  it('handles tool call formatting', () => {
+  it('renders output lines with content', () => {
     const mockSession: SessionInfo = {
       name: 'test-session',
       pid: 12345,
       state: SessionState.Running,
       startedAt: new Date(),
       workingDirectory: '/test',
+      promptCount: 0,
     };
 
     const mockOutputLines: OutputLine[] = [
       {
         sessionName: 'test-session',
-        text: '⏺ Bash(npm test)',
-        timestamp: new Date(),
-        isError: false,
-      },
-      {
-        sessionName: 'test-session',
-        text: '  ⎿ All tests passed',
+        text: 'Working on the fix...',
         timestamp: new Date(),
         isError: false,
       },
@@ -139,8 +148,25 @@ describe('OutputPane', () => {
       <OutputPane session={mockSession} outputLines={mockOutputLines} />,
     );
 
-    expect(lastFrame()).toContain('⏺ Bash(npm test)');
-    expect(lastFrame()).toContain('⎿ All tests passed');
+    expect(lastFrame()).toContain('Working on the fix...');
+  });
+
+  it('shows scroll position indicator', () => {
+    const mockSession: SessionInfo = {
+      name: 'test-session',
+      pid: 12345,
+      state: SessionState.Running,
+      startedAt: new Date(),
+      workingDirectory: '/test',
+      promptCount: 0,
+    };
+
+    const { lastFrame } = render(
+      <OutputPane session={mockSession} outputLines={[]} />,
+    );
+
+    // At bottom, should show END
+    expect(lastFrame()).toContain('[END]');
   });
 
   it('limits visible lines based on maxVisibleLines', () => {
@@ -150,6 +176,7 @@ describe('OutputPane', () => {
       state: SessionState.Running,
       startedAt: new Date(),
       workingDirectory: '/test',
+      promptCount: 0,
     };
 
     // Create 100 lines

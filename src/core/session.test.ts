@@ -1,74 +1,34 @@
 import { EventEmitter } from 'node:events';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
-import * as pty from '@homebridge/node-pty-prebuilt-multiarch';
+import * as childProcess from 'node:child_process';
 import { Session } from './session.js';
 import { SessionState, SessionConfig } from '../types.js';
-import { SpawnFailedError } from '../utils/errors.js';
 
-vi.mock('@homebridge/node-pty-prebuilt-multiarch', () => ({
+vi.mock('node:child_process', () => ({
   spawn: vi.fn(),
 }));
 
-const mockedPtySpawn = vi.mocked(pty.spawn);
+const mockedSpawn = vi.mocked(childProcess.spawn);
 
-interface MockIPty extends EventEmitter {
-  pid: number;
-  write: (data: string) => void;
-  kill: (signal?: string) => void;
-  onData: (callback: (data: string) => void) => void;
-  onExit: (callback: (event: { exitCode: number; signal?: number }) => void) => void;
-  resize: (cols: number, rows: number) => void;
+interface MockChildProcess extends EventEmitter {
+  pid: number | undefined;
+  stdin: { write: ReturnType<typeof vi.fn>; end: ReturnType<typeof vi.fn> };
+  stdout: EventEmitter;
+  stderr: EventEmitter;
+  kill: ReturnType<typeof vi.fn>;
 }
 
-function createMockPty(pid: number = 12345): MockIPty {
-  const ptyEmitter = new EventEmitter() as MockIPty;
-  ptyEmitter.pid = pid;
-
-  let dataCallback: ((data: string) => void) | null = null;
-  let exitCallback: ((event: { exitCode: number; signal?: number }) => void) | null = null;
-
-  ptyEmitter.write = vi.fn(() => {
-    // Simulate writing to pty
-  });
-
-  ptyEmitter.kill = vi.fn((signal?: string) => {
-    process.nextTick(() => {
-      if (exitCallback) {
-        const exitCode = signal === 'SIGKILL' ? 137 : 0;
-        exitCallback({ exitCode, signal: exitCode });
-      }
-    });
-  });
-
-  ptyEmitter.onData = vi.fn((callback: (data: string) => void) => {
-    dataCallback = callback;
-  });
-
-  ptyEmitter.onExit = vi.fn((callback: (event: { exitCode: number; signal?: number }) => void) => {
-    exitCallback = callback;
-  });
-
-  ptyEmitter.resize = vi.fn(() => {
-    // Mock resize
-  });
-
-  // Helper to simulate data from the pty
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (ptyEmitter as any).simulateData = (data: string) => {
-    if (dataCallback) {
-      dataCallback(data);
-    }
+function createMockChild(pid: number = 12345): MockChildProcess {
+  const child = new EventEmitter() as MockChildProcess;
+  child.pid = pid;
+  child.stdin = {
+    write: vi.fn(),
+    end: vi.fn(),
   };
-
-  // Helper to simulate exit
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (ptyEmitter as any).simulateExit = (code: number, signal?: number) => {
-    if (exitCallback) {
-      exitCallback({ exitCode: code, signal });
-    }
-  };
-
-  return ptyEmitter;
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.kill = vi.fn();
+  return child;
 }
 
 describe('Session', () => {
@@ -92,155 +52,251 @@ describe('Session', () => {
     expect(session.getState()).toBe(SessionState.Stopped);
   });
 
-  it('start() spawns "claude" with PTY and correct cwd', async () => {
-    const mockPty = createMockPty(42);
+  it('start() sets state to Running without spawning a process', async () => {
+    await session.start();
+
+    expect(session.getState()).toBe(SessionState.Running);
+    expect(mockedSpawn).not.toHaveBeenCalled();
+  });
+
+  it('start() records startedAt and PID', async () => {
+    await session.start();
+
+    const info = session.getInfo();
+    expect(info.startedAt).toBeInstanceOf(Date);
+    expect(info.pid).toBe(0); // Prompt-based: no persistent process
+  });
+
+  it('getHandle() always returns null in prompt mode', async () => {
+    expect(session.getHandle()).toBeNull();
+
+    await session.start();
+    expect(session.getHandle()).toBeNull();
+  });
+
+  it('getSessionId() returns a UUID string', () => {
+    const id = session.getSessionId();
+    expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  });
+
+  it('isProcessing() returns false when idle', async () => {
+    await session.start();
+    expect(session.isProcessing()).toBe(false);
+  });
+
+  it('sendPrompt() throws when session is not running', async () => {
+    await expect(session.sendPrompt('hello')).rejects.toThrow('is not running');
+  });
+
+  it('sendPrompt() uses --session-id on first prompt', async () => {
+    const mockChild = createMockChild(42);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    mockedPtySpawn.mockReturnValue(mockPty as any);
+    mockedSpawn.mockReturnValue(mockChild as any);
 
     await session.start();
 
-    expect(mockedPtySpawn).toHaveBeenCalledWith(
+    const promptPromise = session.sendPrompt('hello');
+
+    // Verify spawn was called with --session-id
+    expect(mockedSpawn).toHaveBeenCalledWith(
       'claude',
-      [],
+      expect.arrayContaining(['--print', '--output-format', 'text', '--session-id']),
       expect.objectContaining({
         cwd: '/tmp/test',
-        cols: expect.any(Number),
-        rows: expect.any(Number),
+        stdio: ['pipe', 'pipe', 'pipe'],
       }),
     );
+
+    // Verify --session-id has the UUID value
+    const args = mockedSpawn.mock.calls[0][1] as string[];
+    const sessionIdIndex = args.indexOf('--session-id');
+    expect(sessionIdIndex).toBeGreaterThan(-1);
+    expect(args[sessionIdIndex + 1]).toBe(session.getSessionId());
+
+    // Verify prompt was written to stdin
+    expect(mockChild.stdin.write).toHaveBeenCalledWith('hello');
+    expect(mockChild.stdin.end).toHaveBeenCalled();
+
+    // Simulate response
+    mockChild.stdout.emit('data', Buffer.from('world'));
+    mockChild.emit('close', 0);
+
+    const result = await promptPromise;
+    expect(result).toBe('world');
   });
 
-  it('start() sets state to Running and records PID', async () => {
-    const mockPty = createMockPty(9999);
+  it('sendPrompt() uses --resume on subsequent prompts', async () => {
+    const mockChild1 = createMockChild(42);
+    const mockChild2 = createMockChild(43);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    mockedPtySpawn.mockReturnValue(mockPty as any);
+    mockedSpawn.mockReturnValueOnce(mockChild1 as any).mockReturnValueOnce(mockChild2 as any);
 
     await session.start();
 
-    expect(session.getState()).toBe(SessionState.Running);
-    const info = session.getInfo();
-    expect(info.pid).toBe(9999);
+    // First prompt
+    const p1 = session.sendPrompt('first');
+    mockChild1.stdout.emit('data', Buffer.from('response1'));
+    mockChild1.emit('close', 0);
+    await p1;
+
+    // Second prompt
+    const p2 = session.sendPrompt('second');
+
+    // Verify spawn was called with --resume
+    const args = mockedSpawn.mock.calls[1][1] as string[];
+    expect(args).toContain('--resume');
+    expect(args).not.toContain('--session-id');
+    const resumeIndex = args.indexOf('--resume');
+    expect(args[resumeIndex + 1]).toBe(session.getSessionId());
+
+    mockChild2.stdout.emit('data', Buffer.from('response2'));
+    mockChild2.emit('close', 0);
+
+    const result = await p2;
+    expect(result).toBe('response2');
   });
 
-  it('start() throws SpawnFailedError when pid is undefined', async () => {
-    const mockPty = createMockPty(12345);
+  it('sendPrompt() emits promptStart, data, and promptComplete events', async () => {
+    const mockChild = createMockChild(42);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (mockPty as any).pid = undefined;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    mockedPtySpawn.mockReturnValue(mockPty as any);
-
-    await expect(session.start()).rejects.toThrow(SpawnFailedError);
-    await expect(
-      new Session(config).start().catch((e: unknown) => {
-        const pty2 = createMockPty(1);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (pty2 as any).pid = undefined;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        mockedPtySpawn.mockReturnValue(pty2 as any);
-        throw e;
-      }),
-    ).rejects.toThrow('process pid is undefined');
-  });
-
-  it('unexpected "exit" event transitions to Crashed with exit code', async () => {
-    const mockPty = createMockPty(555);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    mockedPtySpawn.mockReturnValue(mockPty as any);
+    mockedSpawn.mockReturnValue(mockChild as any);
 
     await session.start();
-    expect(session.getState()).toBe(SessionState.Running);
 
-    // Simulate unexpected exit
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (mockPty as any).simulateExit(1);
+    const events: string[] = [];
+    session.on('promptStart', () => events.push('promptStart'));
+    session.on('data', () => events.push('data'));
+    session.on('promptComplete', () => events.push('promptComplete'));
 
-    // Wait for event to propagate
-    await new Promise(resolve => process.nextTick(resolve));
+    const p = session.sendPrompt('test');
 
-    expect(session.getState()).toBe(SessionState.Crashed);
-    expect(session.getExitCode()).toBe(1);
+    mockChild.stdout.emit('data', Buffer.from('chunk1'));
+    mockChild.stdout.emit('data', Buffer.from('chunk2'));
+    mockChild.emit('close', 0);
+
+    await p;
+
+    expect(events).toEqual(['promptStart', 'data', 'data', 'promptComplete']);
   });
 
-  it('stop() sends SIGTERM then resolves when process exits', async () => {
-    const mockPty = createMockPty(777);
+  it('sendPrompt() rejects and emits promptError on non-zero exit', async () => {
+    const mockChild = createMockChild(42);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    mockedPtySpawn.mockReturnValue(mockPty as any);
+    mockedSpawn.mockReturnValue(mockChild as any);
 
     await session.start();
-    expect(session.getState()).toBe(SessionState.Running);
 
-    // Mock process.kill so the "is process alive?" probe (signal 0) succeeds
-    const originalKill = process.kill;
-    const killProbe = vi.fn(() => true);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    process.kill = killProbe as any;
+    const errorHandler = vi.fn();
+    session.on('promptError', errorHandler);
 
-    try {
-      await session.stop();
+    const p = session.sendPrompt('bad');
+    mockChild.emit('close', 1);
 
-      expect(mockPty.kill).toHaveBeenCalledWith('SIGTERM');
-      expect(session.getState()).toBe(SessionState.Stopped);
-    } finally {
-      process.kill = originalKill;
-    }
+    await expect(p).rejects.toThrow('Claude exited with code 1');
+    expect(errorHandler).toHaveBeenCalledTimes(1);
   });
 
-  it('stop() on already-stopped session is a no-op', async () => {
-    // Session was never started, state is Stopped
+  it('sendPrompt() rejects and emits promptError on spawn error', async () => {
+    const mockChild = createMockChild(42);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    mockedSpawn.mockReturnValue(mockChild as any);
+
+    await session.start();
+
+    const errorHandler = vi.fn();
+    session.on('promptError', errorHandler);
+
+    const p = session.sendPrompt('bad');
+    mockChild.emit('error', new Error('spawn ENOENT'));
+
+    await expect(p).rejects.toThrow('spawn ENOENT');
+    expect(errorHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it('sendPrompt() throws if already processing a prompt', async () => {
+    const mockChild = createMockChild(42);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    mockedSpawn.mockReturnValue(mockChild as any);
+
+    await session.start();
+
+    // Start first prompt (don't resolve it)
+    session.sendPrompt('first');
+
+    expect(session.isProcessing()).toBe(true);
+
+    await expect(session.sendPrompt('second')).rejects.toThrow('already processing');
+
+    // Clean up: resolve the first prompt
+    mockChild.emit('close', 0);
+  });
+
+  it('sendPrompt() streams data chunks via data event', async () => {
+    const mockChild = createMockChild(42);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    mockedSpawn.mockReturnValue(mockChild as any);
+
+    await session.start();
+
+    const chunks: string[] = [];
+    session.on('data', (chunk: string) => chunks.push(chunk));
+
+    const p = session.sendPrompt('hello');
+
+    mockChild.stdout.emit('data', Buffer.from('Hello'));
+    mockChild.stdout.emit('data', Buffer.from(' World'));
+    mockChild.emit('close', 0);
+
+    const result = await p;
+    expect(result).toBe('Hello World');
+    expect(chunks).toEqual(['Hello', ' World']);
+  });
+
+  it('stop() is a no-op when already stopped', async () => {
     await session.stop();
     expect(session.getState()).toBe(SessionState.Stopped);
   });
 
-  it('getHandle() returns streams when running, null when stopped', async () => {
-    // Before start, handle is null
-    expect(session.getHandle()).toBeNull();
+  it('stop() sets state to Stopped', async () => {
+    await session.start();
+    expect(session.getState()).toBe(SessionState.Running);
 
-    const mockPty = createMockPty(888);
+    await session.stop();
+    expect(session.getState()).toBe(SessionState.Stopped);
+  });
+
+  it('stop() kills active process if one is running', async () => {
+    const mockChild = createMockChild(42);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    mockedPtySpawn.mockReturnValue(mockPty as any);
+    mockedSpawn.mockReturnValue(mockChild as any);
 
     await session.start();
 
-    const handle = session.getHandle();
-    expect(handle).not.toBeNull();
-    expect(handle!.stdin).toBeDefined();
-    expect(handle!.stdout).toBeDefined();
-    expect(handle!.stderr).toBeDefined();
-    expect(handle!.childProcess).toBeDefined();
+    // Start a prompt (don't resolve it)
+    session.sendPrompt('long prompt').catch(() => {});
+
+    expect(session.isProcessing()).toBe(true);
 
     await session.stop();
-    expect(session.getHandle()).toBeNull();
+
+    expect(mockChild.kill).toHaveBeenCalledWith('SIGTERM');
+    expect(session.getState()).toBe(SessionState.Stopped);
   });
 
-  it('getInfo() returns correct shape with real PID and exitCode', async () => {
-    const mockPty = createMockPty(4242);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    mockedPtySpawn.mockReturnValue(mockPty as any);
-
+  it('getInfo() returns correct shape', async () => {
     await session.start();
     const info = session.getInfo();
 
     expect(info).toEqual(
       expect.objectContaining({
         name: 'test-session',
-        pid: 4242,
+        pid: 0,
         state: SessionState.Running,
         workingDirectory: '/tmp/test',
         exitCode: null,
       }),
     );
     expect(info.startedAt).toBeInstanceOf(Date);
-
-    // Now simulate a crash and check exitCode
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (mockPty as any).simulateExit(42);
-
-    // Wait for event to propagate
-    await new Promise(resolve => process.nextTick(resolve));
-
-    const infoAfterCrash = session.getInfo();
-    expect(infoAfterCrash.state).toBe(SessionState.Crashed);
-    expect(infoAfterCrash.exitCode).toBe(42);
   });
 
   it('getInfo() returns null startedAt before start()', () => {
@@ -248,46 +304,51 @@ describe('Session', () => {
     expect(info.startedAt).toBeNull();
   });
 
-  it('PTY data is forwarded to stdout stream', async () => {
-    const mockPty = createMockPty(999);
+  it('stderr data is emitted via stderr event', async () => {
+    const mockChild = createMockChild(42);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    mockedPtySpawn.mockReturnValue(mockPty as any);
+    mockedSpawn.mockReturnValue(mockChild as any);
 
     await session.start();
-    const handle = session.getHandle();
-    expect(handle).not.toBeNull();
 
-    // Listen for data on stdout
-    const dataChunks: string[] = [];
-    handle!.stdout.on('data', (chunk: Buffer) => {
-      dataChunks.push(chunk.toString());
-    });
+    const stderrChunks: string[] = [];
+    session.on('stderr', (chunk: string) => stderrChunks.push(chunk));
 
-    // Simulate PTY sending data
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (mockPty as any).simulateData('Hello from Claude Code\n');
+    const p = session.sendPrompt('hello');
 
-    // Wait for stream to propagate
-    await new Promise(resolve => setImmediate(resolve));
+    mockChild.stderr.emit('data', Buffer.from('warning'));
+    mockChild.stdout.emit('data', Buffer.from('ok'));
+    mockChild.emit('close', 0);
 
-    expect(dataChunks.join('')).toBe('Hello from Claude Code\n');
+    await p;
+
+    expect(stderrChunks).toEqual(['warning']);
   });
 
-  it('stdin writes are forwarded to PTY', async () => {
-    const mockPty = createMockPty(888);
+  it('env from config is passed to spawned process', async () => {
+    const configWithEnv: SessionConfig = {
+      name: 'env-session',
+      workingDirectory: '/tmp/env',
+      env: { MY_VAR: 'hello' },
+    };
+    const envSession = new Session(configWithEnv);
+    await envSession.start();
+
+    const mockChild = createMockChild(42);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    mockedPtySpawn.mockReturnValue(mockPty as any);
+    mockedSpawn.mockReturnValue(mockChild as any);
 
-    await session.start();
-    const handle = session.getHandle();
-    expect(handle).not.toBeNull();
+    const p = envSession.sendPrompt('test');
 
-    // Write to stdin
-    handle!.stdin.write('test input\n');
+    expect(mockedSpawn).toHaveBeenCalledWith(
+      'claude',
+      expect.any(Array),
+      expect.objectContaining({
+        env: expect.objectContaining({ MY_VAR: 'hello' }),
+      }),
+    );
 
-    // Wait for write to propagate
-    await new Promise(resolve => setImmediate(resolve));
-
-    expect(mockPty.write).toHaveBeenCalledWith('test input\n');
+    mockChild.emit('close', 0);
+    await p;
   });
 });

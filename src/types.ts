@@ -27,6 +27,8 @@ export interface SessionInfo {
   startedAt: Date | null;
   workingDirectory: string;
   exitCode?: number | null;
+  /** Number of prompts sent in this session (0 if not yet interacted) */
+  promptCount: number;
 }
 
 export interface RegistryEntry {

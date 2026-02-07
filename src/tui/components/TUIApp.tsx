@@ -1,10 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
-import type { TUIState, OutputLine } from '../types.js';
+import type { TUIState, TUIAction } from '../types.js';
 import { SessionListPane } from './SessionListPane.js';
 import { OutputPane } from './OutputPane.js';
 import { StatusBar } from './StatusBar.js';
+import { InputBar } from './InputBar.js';
+import { HelpOverlay } from './HelpOverlay.js';
+import { ActionMenu } from './ActionMenu.js';
+import { SessionCreationDialog } from './SessionCreationDialog.js';
+import { ConfirmationDialog } from './ConfirmationDialog.js';
 import { handleKeypress } from '../keybindings.js';
+import { topOverlay } from '../overlay-helpers.js';
 
 /**
  * TUIApp component props.
@@ -16,23 +22,30 @@ export interface TUIAppProps {
   onStateChange?: (state: TUIState) => void;
   /** Callback when user requests exit */
   onExit: () => void;
+  /** Callback when user sends a prompt to the attached session */
+  onSendPrompt?: (sessionName: string, prompt: string) => void;
+  /** Callback for side-effect actions produced by keybindings */
+  onAction?: (action: TUIAction) => void;
+  /** Whether a prompt is currently being processed */
+  isProcessing?: boolean;
 }
 
 /**
  * Main TUI application component.
  *
- * Renders a three-panel layout:
- * - Header: Title bar with session count
- * - Body: Two-column layout (SessionListPane | OutputPane)
- * - Footer: StatusBar with keyboard shortcuts
- *
- * Handles keyboard input via Ink's useInput hook and delegates to keybindings module.
- * Manages selection state and notifies parent of state changes.
+ * Renders a professional layout with:
+ * - Header: styled title bar with session count and mode indicator
+ * - Body: Two-column layout (SessionListPane | OutputPane) or overlay when active
+ * - Input bar: visible only in attached mode
+ * - Footer: StatusBar with mode badges and context-sensitive shortcuts
  */
 export function TUIApp({
   initialState,
   onStateChange,
   onExit,
+  onSendPrompt,
+  onAction,
+  isProcessing = false,
 }: TUIAppProps): React.ReactElement {
   const [state, setState] = useState<TUIState>(initialState);
 
@@ -41,42 +54,57 @@ export function TUIApp({
   const terminalHeight = process.stdout.rows || 24;
   const isSmallTerminal = terminalWidth < 80 || terminalHeight < 20;
 
-  // Handle keyboard input in navigation mode
-  // Note: In attached mode, the TUI is unmounted so this hook is not active
+  const isAttached = state.mode === 'attached';
+  const activeOverlay = topOverlay(state);
+
+  // Handle keyboard input
+  // Overlay stack takes priority, then base mode (navigation/attached)
+  // Disabled when session-creation overlay is active (it handles its own text input)
+  const isSessionCreation = activeOverlay?.kind === 'session-creation';
+
   useInput(
     (input, key) => {
-      // Map Ink key events to our key codes
+      // Map Ink key events to raw key codes
       let keyCode: string;
 
       if (key.return) {
-        keyCode = '\r'; // Enter
+        keyCode = '\r';
       } else if (key.tab) {
-        keyCode = key.shift ? '\x1b[Z' : '\t'; // Tab or Shift+Tab
+        keyCode = key.shift ? '\x1b[Z' : '\t';
       } else if (key.upArrow) {
-        keyCode = '\x1b[A'; // Up arrow
+        keyCode = '\x1b[A';
       } else if (key.downArrow) {
-        keyCode = '\x1b[B'; // Down arrow
+        keyCode = '\x1b[B';
       } else if (key.escape) {
-        keyCode = '\x1b'; // Escape
+        keyCode = '\x1b';
       } else if (key.ctrl && input === 'c') {
-        keyCode = '\x03'; // Ctrl+C
+        keyCode = '\x03';
+      } else if (key.ctrl && input === 'a') {
+        keyCode = '\x01';
+      } else if (key.delete || key.backspace) {
+        keyCode = '\x7f';
       } else {
-        keyCode = input; // Regular character
+        keyCode = input;
       }
 
-      // Process the key press
       const result = handleKeypress(state, keyCode);
 
-      // Check if we should quit
-      if ('quit' in result && result.quit) {
-        onExit();
-        return;
+      switch (result.kind) {
+        case 'quit':
+          onExit();
+          break;
+        case 'state':
+          setState(result.state);
+          break;
+        case 'action':
+          setState(result.state);
+          if (onAction) {
+            onAction(result.action);
+          }
+          break;
       }
-
-      // Update state (TypeScript knows result is TUIState here because of the check above)
-      setState(result as TUIState);
     },
-    { isActive: true },
+    { isActive: !isSessionCreation },
   );
 
   // Notify parent of state changes
@@ -86,19 +114,18 @@ export function TUIApp({
     }
   }, [state, onStateChange]);
 
-  // Determine selected session for output pane
-  const selectedSession = state.sessions.find(
-    (s) => s.name === state.selectedSessionName,
-  );
+  // Determine which session to display in the output pane:
+  // attached session takes priority, then selected session
+  const displaySessionName =
+    isAttached && state.attachedSessionName
+      ? state.attachedSessionName
+      : state.selectedSessionName;
+  const displaySession = state.sessions.find(
+    (s) => s.name === displaySessionName,
+  ) ?? null;
 
-  // Convert output lines (strings) to OutputLine objects
-  // This is a temporary adapter until we refactor the state shape
-  const outputLines: OutputLine[] = state.outputLines.map((text) => ({
-    sessionName: state.selectedSessionName ?? '',
-    text,
-    timestamp: new Date(), // Placeholder timestamp
-    isError: false,
-  }));
+  // Output lines now carry full metadata (timestamp, isError) from OutputCapture
+  const outputLines = state.outputLines;
 
   // Render small terminal warning if terminal is too small
   if (isSmallTerminal) {
@@ -124,9 +151,113 @@ export function TUIApp({
     );
   }
 
+  // Render the active overlay content (replaces body when active)
+  const renderOverlay = (): React.ReactElement | null => {
+    if (!activeOverlay) return null;
+
+    switch (activeOverlay.kind) {
+      case 'help':
+        return (
+          <HelpOverlay
+            scrollOffset={activeOverlay.scrollOffset}
+            onScroll={(delta) => {
+              const result = handleKeypress(state, delta > 0 ? '\x1b[B' : '\x1b[A');
+              if (result.kind === 'state') setState(result.state);
+            }}
+            onDismiss={() => {
+              const result = handleKeypress(state, '\x1b');
+              if (result.kind === 'state') setState(result.state);
+            }}
+          />
+        );
+      case 'action-menu':
+        return (
+          <ActionMenu
+            selectedIndex={activeOverlay.selectedIndex}
+            targetSessionName={activeOverlay.targetSessionName}
+            onSelect={() => {
+              const result = handleKeypress(state, '\r');
+              if (result.kind === 'state') setState(result.state);
+              else if (result.kind === 'action') {
+                setState(result.state);
+                if (onAction) onAction(result.action);
+              } else if (result.kind === 'quit') onExit();
+            }}
+            onNavigate={(delta) => {
+              const result = handleKeypress(state, delta > 0 ? '\x1b[B' : '\x1b[A');
+              if (result.kind === 'state') setState(result.state);
+            }}
+            onDismiss={() => {
+              const result = handleKeypress(state, '\x1b');
+              if (result.kind === 'state') setState(result.state);
+            }}
+          />
+        );
+      case 'session-creation':
+        return (
+          <SessionCreationDialog
+            fields={activeOverlay.fields}
+            activeField={activeOverlay.activeField}
+            errors={activeOverlay.errors}
+            isSubmitting={activeOverlay.isSubmitting}
+            onFieldChange={(field, value) => {
+              // Direct state update for form fields
+              const newOverlay = {
+                ...activeOverlay,
+                fields: { ...activeOverlay.fields, [field]: value },
+                errors: { ...activeOverlay.errors, [field]: '' },
+              };
+              setState({
+                ...state,
+                overlayStack: [...state.overlayStack.slice(0, -1), newOverlay],
+              });
+            }}
+            onFieldSwitch={(field) => {
+              const newOverlay = { ...activeOverlay, activeField: field };
+              setState({
+                ...state,
+                overlayStack: [...state.overlayStack.slice(0, -1), newOverlay],
+              });
+            }}
+            onSubmit={() => {
+              const result = handleKeypress(state, '\r');
+              if (result.kind === 'state') setState(result.state);
+              else if (result.kind === 'action') {
+                setState(result.state);
+                if (onAction) onAction(result.action);
+              }
+            }}
+            onDismiss={() => {
+              const result = handleKeypress(state, '\x1b');
+              if (result.kind === 'state') setState(result.state);
+            }}
+          />
+        );
+      case 'confirmation':
+        return (
+          <ConfirmationDialog
+            title={activeOverlay.title}
+            message={activeOverlay.message}
+            onConfirm={() => {
+              const result = handleKeypress(state, 'y');
+              if (result.kind === 'state') setState(result.state);
+              else if (result.kind === 'action') {
+                setState(result.state);
+                if (onAction) onAction(result.action);
+              }
+            }}
+            onCancel={() => {
+              const result = handleKeypress(state, '\x1b');
+              if (result.kind === 'state') setState(result.state);
+            }}
+          />
+        );
+    }
+  };
+
   return (
     <Box flexDirection="column" height="100%">
-      {/* Header: Title bar */}
+      {/* Header: Professional title bar */}
       <Box
         flexDirection="row"
         justifyContent="space-between"
@@ -135,43 +266,64 @@ export function TUIApp({
         borderBottom
       >
         <Box flexDirection="row" gap={1}>
+          <Text bold color="cyan">⚡</Text>
           <Text bold>AgentSpawn</Text>
-          {state.mode === 'attached' && state.attachedSessionName && (
-            <Text color="green">
-              [ATTACHED: {state.attachedSessionName}]
+          {isAttached && state.attachedSessionName && (
+            <Text color="magenta" inverse bold>
+              {' '}ATTACHED: {state.attachedSessionName}{' '}
             </Text>
           )}
         </Box>
-        <Text color="cyan">
-          [{state.sessions.length} {state.sessions.length === 1 ? 'session' : 'sessions'}]
+        <Text dimColor>
+          {state.sessions.length} {state.sessions.length === 1 ? 'session' : 'sessions'}
         </Text>
       </Box>
 
-      {/* Body: Two-column layout (30% session list / 70% output) */}
-      <Box flexDirection="row" flexGrow={1}>
-        {/* Left column: Session list */}
-        <Box
-          width="30%"
-          borderStyle="single"
-          borderRight
-          flexDirection="column"
-          paddingY={1}
-        >
-          <SessionListPane
-            sessions={state.sessions}
-            selectedSessionName={state.selectedSessionName}
-            attachedSessionName={state.attachedSessionName}
-          />
+      {/* Body: Overlay replaces content, or show two-column layout */}
+      {activeOverlay ? (
+        <Box flexGrow={1} flexDirection="column" justifyContent="center" alignItems="center" paddingY={1}>
+          {renderOverlay()}
         </Box>
+      ) : (
+        <Box flexDirection="row" flexGrow={1}>
+          {/* Left column: Session list */}
+          <Box
+            width="30%"
+            borderStyle="single"
+            borderRight
+            flexDirection="column"
+            paddingY={1}
+          >
+            <SessionListPane
+              sessions={state.sessions}
+              selectedSessionName={state.selectedSessionName}
+              attachedSessionName={state.attachedSessionName}
+            />
+          </Box>
 
-        {/* Right column: Output pane */}
-        <Box width="70%" flexDirection="column" paddingY={1} paddingX={1}>
-          <OutputPane
-            session={selectedSession ?? null}
-            outputLines={outputLines}
-          />
+          {/* Right column: Output pane */}
+          <Box width="70%" flexDirection="column" paddingY={1} paddingX={1}>
+            <OutputPane
+              session={displaySession}
+              outputLines={outputLines}
+            />
+          </Box>
         </Box>
-      </Box>
+      )}
+
+      {/* Input bar: visible only in attached mode (and no overlay) */}
+      {isAttached && state.attachedSessionName && !activeOverlay && (
+        <InputBar
+          isActive={isAttached}
+          isProcessing={isProcessing}
+          sessionName={state.attachedSessionName}
+          onSubmit={(text) => {
+            if (state.attachedSessionName && onSendPrompt) {
+              onSendPrompt(state.attachedSessionName, text);
+            }
+          }}
+        />
+      )}
 
       {/* Footer: Status bar */}
       <Box borderStyle="single" borderTop>

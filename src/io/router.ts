@@ -14,10 +14,10 @@ export class Router {
   constructor(private readonly options?: RouterOptions) {}
 
   attach(session: Session, options?: { onDetachRequest?: () => void }): void {
-    const handle = session.getHandle();
+    const handle = session.getHandle() as SessionHandle | null;
     if (!handle) {
       throw new Error(
-        'Cannot attach to session: session handle is null (session may not be running)',
+        'Cannot attach to session: session handle is null (prompt-based sessions use sendPrompt() instead)',
       );
     }
 

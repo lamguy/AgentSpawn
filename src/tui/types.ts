@@ -1,9 +1,108 @@
 import type { SessionInfo } from '../types.js';
 
 /**
- * TUI interaction mode.
+ * Base TUI interaction mode.
+ * Governs what the main layout does. Overlays render on top.
  */
 export type TUIMode = 'navigation' | 'attached';
+
+// ── Overlay State Types ─────────────────────────────────────────────────────
+
+/**
+ * Discriminated union of all overlay types.
+ * Each variant carries the state specific to that overlay.
+ */
+export type OverlayState =
+  | HelpOverlayState
+  | ActionMenuOverlayState
+  | SessionCreationOverlayState
+  | ConfirmationOverlayState;
+
+export interface HelpOverlayState {
+  kind: 'help';
+  /** Scroll offset for long help text */
+  scrollOffset: number;
+}
+
+export interface ActionMenuOverlayState {
+  kind: 'action-menu';
+  /** Currently highlighted menu item index */
+  selectedIndex: number;
+  /** The session this menu applies to (null for global actions) */
+  targetSessionName: string | null;
+}
+
+export interface SessionCreationOverlayState {
+  kind: 'session-creation';
+  /** Form field values */
+  fields: {
+    name: string;
+    directory: string;
+  };
+  /** Which form field is currently focused */
+  activeField: 'name' | 'directory';
+  /** Validation errors keyed by field name (empty string = no error) */
+  errors: {
+    name: string;
+    directory: string;
+  };
+  /** Whether the form submission is in progress */
+  isSubmitting: boolean;
+}
+
+export interface ConfirmationOverlayState {
+  kind: 'confirmation';
+  /** Title displayed in the dialog header */
+  title: string;
+  /** Descriptive message explaining what will happen */
+  message: string;
+  /** The action to execute if confirmed */
+  action: ConfirmableAction;
+}
+
+/**
+ * Actions that require user confirmation before execution.
+ * Discriminated union so the orchestrator knows what to do on confirm.
+ */
+export type ConfirmableAction =
+  | { kind: 'stop-session'; sessionName: string }
+  | { kind: 'restart-session'; sessionName: string }
+  | { kind: 'stop-all' };
+
+// ── Status Message ──────────────────────────────────────────────────────────
+
+export interface StatusMessage {
+  text: string;
+  level: 'info' | 'error' | 'success';
+  /** Timestamp for auto-clear (e.g., clear after 5 seconds) */
+  expiresAt: number;
+}
+
+// ── TUI Action (side-effect descriptors) ────────────────────────────────────
+
+/**
+ * Side-effect actions that the orchestrator must execute.
+ * Key handlers produce these; the orchestrator consumes them.
+ */
+export type TUIAction =
+  | { kind: 'create-session'; name: string; directory: string }
+  | { kind: 'stop-session'; sessionName: string }
+  | { kind: 'restart-session'; sessionName: string }
+  | { kind: 'stop-all' }
+  | { kind: 'send-prompt'; sessionName: string; prompt: string };
+
+// ── Action Menu Item ────────────────────────────────────────────────────────
+
+export interface ActionMenuItem {
+  id: string;
+  label: string;
+  description: string;
+  shortcut?: string;
+  /** Whether this item is available given current state */
+  enabled: boolean;
+}
+
+// ── TUI Application State ───────────────────────────────────────────────────
 
 /**
  * TUI application state — represents the complete view model for the terminal UI.
@@ -11,17 +110,25 @@ export type TUIMode = 'navigation' | 'attached';
 export interface TUIState {
   /** All sessions currently tracked by the manager */
   sessions: SessionInfo[];
-  /** Name of the currently selected session in the UI */
+  /** Name of the currently selected session in the session list */
   selectedSessionName: string | null;
-  /** Name of the session that's receiving stdin (attached by router) */
+  /** Name of the session that's receiving prompts (in attached mode) */
   attachedSessionName: string | null;
-  /** Captured output lines for the selected session */
-  outputLines: string[];
+  /** Captured output lines for the displayed session (with full metadata) */
+  outputLines: OutputLine[];
   /** Whether the TUI is in the process of shutting down */
   isShuttingDown: boolean;
-  /** Current interaction mode: navigation (TUI shortcuts active) or attached (stdin forwarded) */
+  /** Base interaction mode */
   mode: TUIMode;
+  /** Whether a prompt is being processed by the attached session */
+  isProcessing: boolean;
+  /** Stack of active overlays. Top of array = topmost overlay. Empty = no overlay. */
+  overlayStack: OverlayState[];
+  /** Transient message to display in the status bar (auto-clears) */
+  statusMessage: StatusMessage | null;
 }
+
+// ── Options ─────────────────────────────────────────────────────────────────
 
 /**
  * Options for launching the TUI.
@@ -33,9 +140,10 @@ export interface TUIOptions {
   autoAttach?: boolean;
 }
 
+// ── Adapter Interfaces ──────────────────────────────────────────────────────
+
 /**
  * Read-only snapshot of SessionManager state.
- * This isolates the TUI from direct SessionManager mutation.
  */
 export interface SessionManagerSnapshot {
   /** Get list of all sessions */
@@ -46,12 +154,13 @@ export interface SessionManagerSnapshot {
 
 /**
  * Read-only snapshot of Router state.
- * This isolates the TUI from direct Router mutation.
  */
 export interface RouterSnapshot {
   /** Get the name of the currently attached session (if any) */
   getActiveSession(): string | undefined;
 }
+
+// ── Output Types ────────────────────────────────────────────────────────────
 
 /**
  * Captured output line with metadata.

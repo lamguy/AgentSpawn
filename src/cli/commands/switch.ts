@@ -2,15 +2,17 @@ import { Command } from 'commander';
 import { SessionManager } from '../../core/manager.js';
 import { Router } from '../../io/router.js';
 import { SessionState } from '../../types.js';
+import readline from 'node:readline';
 
 export function registerSwitchCommand(
   program: Command,
   manager: SessionManager,
-  router: Router,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _router: Router,
 ): void {
   program
     .command('switch <name>')
-    .description('Switch to an agent session')
+    .description('Switch to an agent session (interactive prompt mode)')
     .action(async (name: string) => {
       const session = manager.getSession(name);
       if (!session) {
@@ -24,35 +26,36 @@ export function registerSwitchCommand(
         return;
       }
 
-      if (router.getActiveSession()) {
-        router.detach();
-      }
+      console.error(`Attached to session: ${name}. Type prompts, Ctrl+C to detach.`);
 
-      router.attach(session);
-      console.error(`Attached to session: ${name}. Press Ctrl+C to detach.`);
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stderr,
+        prompt: '> ',
+      });
+
+      rl.prompt();
+
+      rl.on('line', async (line: string) => {
+        const prompt = line.trim();
+        if (!prompt) {
+          rl.prompt();
+          return;
+        }
+        try {
+          const response = await session.sendPrompt(prompt);
+          console.log(response);
+        } catch (err) {
+          console.error(`Error: ${err instanceof Error ? err.message : err}`);
+        }
+        rl.prompt();
+      });
 
       return new Promise<void>((resolve) => {
-        const onSigint = (): void => {
-          clearInterval(checkInterval);
-          router.detach();
+        rl.on('close', () => {
           console.error(`\nDetached from session: ${name}`);
-          process.removeListener('SIGINT', onSigint);
           resolve();
-        };
-        process.on('SIGINT', onSigint);
-
-        // Also resolve if session exits while attached
-        const checkInterval = setInterval(() => {
-          if (session.getState() !== SessionState.Running) {
-            clearInterval(checkInterval);
-            if (router.getActiveSession()) {
-              router.detach();
-            }
-            console.error(`\nSession '${name}' exited.`);
-            process.removeListener('SIGINT', onSigint);
-            resolve();
-          }
-        }, 500);
+        });
       });
     });
 }
