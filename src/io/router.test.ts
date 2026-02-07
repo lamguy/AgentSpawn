@@ -87,7 +87,7 @@ describe('Router', () => {
   it('attach() throws if session handle is null', () => {
     const session = createMockSession('bad-session', { handleNull: true });
     expect(() => router.attach(session)).toThrow(
-      'Cannot attach to session: session handle is null (session may not be running)',
+      'Cannot attach to session: session handle is null (prompt-based sessions use sendPrompt() instead)',
     );
   });
 

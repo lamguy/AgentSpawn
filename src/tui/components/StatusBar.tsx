@@ -1,6 +1,6 @@
 import React from 'react';
 import { Box, Text } from 'ink';
-import type { TUIState } from '../types.js';
+import type { TUIState, OverlayState, StatusMessage } from '../types.js';
 
 /**
  * StatusBar component props.
@@ -10,118 +10,201 @@ export interface StatusBarProps {
   state: TUIState;
   /** Version string (e.g., "v0.1.0") */
   version?: string;
-  /** Model name (e.g., "opus", "sonnet") */
-  model?: string;
-  /** Cost counter (e.g., "$0.12") */
-  cost?: string;
-  /** Whether to show detailed info */
-  showDetails?: boolean;
+}
+
+interface ShortcutDef {
+  key: string;
+  action: string;
 }
 
 /**
- * StatusBar component — displays persistent bottom bar with keyboard shortcuts,
- * session count, version, model, and cost information.
- *
- * Matches Claude Code status bar style:
- * - Single line at bottom of screen
- * - Space-separated sections
- * - Keyboard shortcuts in cyan
- * - Session count and metadata
+ * Get the mode badge label and colors based on current state.
+ */
+function getModeBadge(
+  mode: TUIState['mode'],
+  topOverlay: OverlayState | null,
+): { label: string; bgColor?: string; fgColor: string } {
+  // Overlay takes priority over base mode
+  if (topOverlay) {
+    switch (topOverlay.kind) {
+      case 'help':
+        return { label: ' HELP ', bgColor: 'yellow', fgColor: 'black' };
+      case 'action-menu':
+        return { label: ' MENU ', bgColor: 'blue', fgColor: 'black' };
+      case 'session-creation':
+        return { label: ' NEW SESSION ', bgColor: 'yellow', fgColor: 'black' };
+      case 'confirmation':
+        return { label: ' CONFIRM ', bgColor: 'yellow', fgColor: 'black' };
+    }
+  }
+
+  switch (mode) {
+    case 'attached':
+      return { label: ' ATTACHED ', bgColor: 'magenta', fgColor: 'black' };
+    case 'navigation':
+    default:
+      return { label: ' NAV ', fgColor: 'cyan' };
+  }
+}
+
+/**
+ * Get context-sensitive shortcuts based on current mode and overlay.
+ */
+function getShortcuts(
+  mode: TUIState['mode'],
+  topOverlay: OverlayState | null,
+): ShortcutDef[] {
+  if (topOverlay) {
+    switch (topOverlay.kind) {
+      case 'help':
+        return [
+          { key: 'Esc', action: 'close' },
+          { key: '?', action: 'close' },
+        ];
+      case 'action-menu':
+        return [
+          { key: 'Up/Down', action: 'navigate' },
+          { key: 'Enter', action: 'select' },
+          { key: 'Esc', action: 'close' },
+        ];
+      case 'session-creation':
+        return [
+          { key: 'Tab', action: 'switch field' },
+          { key: 'Enter', action: 'create' },
+          { key: 'Esc', action: 'cancel' },
+        ];
+      case 'confirmation':
+        return [
+          { key: 'y', action: 'confirm' },
+          { key: 'n', action: 'cancel' },
+        ];
+    }
+  }
+
+  switch (mode) {
+    case 'attached':
+      return [
+        { key: 'Esc', action: 'detach' },
+        { key: 'Ctrl+C', action: 'clear' },
+      ];
+    case 'navigation':
+    default:
+      return [
+        { key: 'Tab', action: 'next' },
+        { key: 'Enter', action: 'attach' },
+        { key: 'n', action: 'new' },
+        { key: 'x', action: 'stop' },
+        { key: '?', action: 'help' },
+        { key: ':', action: 'menu' },
+      ];
+  }
+}
+
+/**
+ * Get the color for a status message level.
+ */
+function getStatusMessageColor(level: StatusMessage['level']): string {
+  switch (level) {
+    case 'success':
+      return 'green';
+    case 'error':
+      return 'red';
+    case 'info':
+    default:
+      return 'cyan';
+  }
+}
+
+/**
+ * StatusBar component -- displays persistent bottom bar with mode badge,
+ * context-sensitive keyboard shortcuts, and session metadata.
  *
  * Layout:
  * ```
- * [Tab] switch  [Enter] attach  [q] quit  [?] help    3 sessions  model: opus  $0.12
+ * [mode-badge] | {shortcuts or status message}           | {metadata}
  * ```
  *
- * Design principles:
- * - Semantic colors only (cyan for informational metadata)
- * - Compact — single line, essential info only
- * - Keyboard-first — shortcuts prominently displayed
- * - Progressive disclosure — optional details can be shown/hidden
+ * The mode badge reflects the current mode or active overlay:
+ * - NAV: cyan text (no background)
+ * - ATTACHED: magenta background, black text
+ * - HELP/MENU/NEW SESSION/CONFIRM: yellow/blue background, black text
+ *
+ * Shortcuts change based on context. When a status message is active,
+ * it replaces the shortcuts area with a colored message.
  */
 export function StatusBar({
   state,
   version,
-  model,
-  cost,
-  showDetails = true,
 }: StatusBarProps): React.ReactElement {
   const sessionCount = state.sessions.length;
-  const runningCount = state.sessions.filter((s) => s.state === 'running').length;
-  const isAttached = state.mode === 'attached';
 
-  // Build keyboard shortcut sections based on mode
-  const shortcuts = isAttached
-    ? [{ key: '[Esc]', action: 'detach  Type your prompt and press Enter' }]
-    : [
-        { key: '[Tab]', action: 'switch' },
-        { key: '[Enter]', action: 'attach' },
-        { key: '[q]', action: 'quit' },
-        { key: '[?]', action: 'help' },
-      ];
+  // Determine the top overlay (if any)
+  const topOverlay =
+    state.overlayStack && state.overlayStack.length > 0
+      ? state.overlayStack[state.overlayStack.length - 1]
+      : null;
 
-  // Build metadata sections (right side)
-  const metadata: string[] = [];
+  const badge = getModeBadge(state.mode, topOverlay);
+  const shortcuts = getShortcuts(state.mode, topOverlay);
 
-  // Session count with running indicator
-  if (sessionCount === 0) {
-    metadata.push('no sessions');
-  } else if (runningCount === sessionCount) {
-    metadata.push(`${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`);
-  } else {
-    metadata.push(
-      `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'} (${runningCount} running)`,
-    );
-  }
+  // Check for active (non-expired) status message
+  const statusMessage =
+    state.statusMessage && state.statusMessage.expiresAt > Date.now()
+      ? state.statusMessage
+      : null;
 
-  // Version
-  if (showDetails && version) {
-    metadata.push(version);
-  }
-
-  // Model indicator
-  if (showDetails && model) {
-    metadata.push(`model: ${model}`);
-  }
-
-  // Cost counter
-  if (showDetails && cost) {
-    metadata.push(cost);
-  }
+  // Session count string
+  const sessionCountStr =
+    sessionCount === 0
+      ? 'no sessions'
+      : `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`;
 
   return (
-    <Box
-      flexDirection="row"
-      justifyContent="space-between"
-      paddingX={1}
-      backgroundColor={isAttached ? 'cyan' : undefined}
-    >
-      {/* Left side: keyboard shortcuts */}
-      <Box flexDirection="row" gap={1}>
-        {shortcuts.map(({ key, action }, index) => (
-          <Box key={action} flexDirection="row" gap={0}>
-            {index > 0 && <Text>  </Text>}
-            <Text color={isAttached ? 'black' : 'cyan'} bold={isAttached}>
-              {key}
-            </Text>
-            <Text color={isAttached ? 'black' : undefined} bold={isAttached}>
-              {' '}
-              {action}
-            </Text>
+    <Box flexDirection="row" justifyContent="space-between" paddingX={1}>
+      {/* Left: mode badge + shortcuts/status message */}
+      <Box flexDirection="row" gap={0}>
+        {/* Mode badge */}
+        {badge.bgColor ? (
+          <Text bold backgroundColor={badge.bgColor} color={badge.fgColor}>
+            {badge.label}
+          </Text>
+        ) : (
+          <Text bold color={badge.fgColor}>
+            {badge.label}
+          </Text>
+        )}
+
+        <Text color="gray"> | </Text>
+
+        {/* Shortcuts or status message */}
+        {statusMessage ? (
+          <Text color={getStatusMessageColor(statusMessage.level)} bold>
+            {statusMessage.text}
+          </Text>
+        ) : (
+          <Box flexDirection="row" gap={0}>
+            {shortcuts.map(({ key, action }, index) => (
+              <Box key={key + action} flexDirection="row" gap={0}>
+                {index > 0 && <Text>  </Text>}
+                <Text bold color="cyan">
+                  {key}
+                </Text>
+                <Text dimColor> {action}</Text>
+              </Box>
+            ))}
           </Box>
-        ))}
+        )}
       </Box>
 
-      {/* Right side: metadata */}
-      <Box flexDirection="row" gap={1}>
-        {metadata.map((item, index) => (
-          <Box key={index} flexDirection="row" gap={0}>
-            {index > 0 && <Text>  </Text>}
-            <Text color={isAttached ? 'black' : 'cyan'} bold={isAttached}>
-              {item}
-            </Text>
-          </Box>
-        ))}
+      {/* Right: metadata */}
+      <Box flexDirection="row" gap={0}>
+        <Text color="cyan">{sessionCountStr}</Text>
+        {version && (
+          <>
+            <Text dimColor>  </Text>
+            <Text dimColor>{version}</Text>
+          </>
+        )}
       </Box>
     </Box>
   );

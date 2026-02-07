@@ -1,188 +1,145 @@
-import * as pty from '@homebridge/node-pty-prebuilt-multiarch';
-import { SessionState, SessionConfig, SessionInfo, SessionHandle } from '../types.js';
-import { SpawnFailedError } from '../utils/errors.js';
-import { Writable, Readable, PassThrough } from 'node:stream';
+import { spawn, ChildProcess } from 'node:child_process';
+import { SessionState, SessionConfig, SessionInfo } from '../types.js';
 import { EventEmitter } from 'node:events';
+import crypto from 'node:crypto';
 
-// Wrapper to make PTY compatible with ChildProcess interface
-class PtyChildProcessWrapper extends EventEmitter {
-  readonly pid: number;
-  readonly stdin: Writable;
-  readonly stdout: Readable;
-  readonly stderr: Readable;
-  killed = false;
-
-  constructor(private readonly ptyProcess: pty.IPty) {
-    super();
-    this.pid = ptyProcess.pid;
-
-    // Create a writable stream that forwards to PTY
-    this.stdin = new Writable({
-      write: (chunk: Buffer | string, encoding: BufferEncoding, callback: (error?: Error | null) => void) => {
-        try {
-          const data = chunk.toString();
-          ptyProcess.write(data);
-          callback();
-        } catch (err) {
-          callback(err as Error);
-        }
-      },
-    });
-
-    // Create a readable stream for output (PTY merges stdout/stderr)
-    this.stdout = new PassThrough();
-
-    // Create an empty stderr stream (PTY merges stderr into stdout)
-    this.stderr = new PassThrough();
-
-    // Forward PTY data to stdout
-    ptyProcess.onData((data: string) => {
-      (this.stdout as PassThrough).write(data);
-    });
-
-    // Forward PTY exit to this wrapper
-    ptyProcess.onExit((event: { exitCode: number; signal?: number }) => {
-      this.emit('exit', event.exitCode, event.signal);
-    });
-  }
-
-  kill(signal?: NodeJS.Signals | number): boolean {
-    try {
-      if (typeof signal === 'string') {
-        // Map signal names to signal strings for node-pty
-        this.ptyProcess.kill(signal);
-      } else if (typeof signal === 'number') {
-        // Map signal numbers to signal names for node-pty
-        const signalMap: Record<number, string> = {
-          15: 'SIGTERM',
-          9: 'SIGKILL',
-          2: 'SIGINT',
-          1: 'SIGHUP',
-        };
-        this.ptyProcess.kill(signalMap[signal] ?? 'SIGTERM');
-      } else {
-        this.ptyProcess.kill();
-      }
-      this.killed = true;
-      return true;
-    } catch {
-      return false;
-    }
-  }
-}
-
-export class Session {
+/**
+ * Session — represents a conversation with Claude Code.
+ *
+ * Uses `claude --print` per prompt instead of a persistent interactive process.
+ * Conversation continuity is maintained via --session-id / --resume flags.
+ * The TUI stays in control at all times.
+ */
+export class Session extends EventEmitter {
   private state: SessionState = SessionState.Stopped;
   private pid: number = 0;
   private startedAt: Date | null = null;
-  private childProcess: PtyChildProcessWrapper | null = null;
-  private ptyProcess: pty.IPty | null = null;
   private exitCode: number | null = null;
+  private claudeSessionId: string;
+  private promptCount: number = 0;
+  private activeProcess: ChildProcess | null = null;
 
   constructor(
     private readonly config: SessionConfig,
     private readonly shutdownTimeoutMs: number = 5000,
-  ) {}
+  ) {
+    super();
+    this.claudeSessionId = crypto.randomUUID();
+  }
 
   async start(): Promise<void> {
-    // Spawn Claude Code with a pseudo-TTY so it detects an interactive terminal
-    // Claude Code runs in full interactive mode with its own TUI
-    // This allows the user to see Claude's prompt interface and interact naturally
-    const ptyProcess = pty.spawn('claude', [], {
-      cwd: this.config.workingDirectory,
-      env: { ...process.env, ...this.config.env },
-      // Default PTY dimensions
-      cols: process.stdout.columns || 80,
-      rows: process.stdout.rows || 24,
-    });
-
-    if (ptyProcess.pid === undefined) {
-      throw new SpawnFailedError(this.config.name, 'process pid is undefined');
-    }
-
-    // Wrap PTY in a ChildProcess-compatible interface
-    const childProcess = new PtyChildProcessWrapper(ptyProcess);
-
-    this.ptyProcess = ptyProcess;
-    this.childProcess = childProcess;
-    this.pid = ptyProcess.pid;
     this.state = SessionState.Running;
     this.startedAt = new Date();
+    this.pid = 0; // Prompt-based sessions have no persistent process
     this.exitCode = null;
+  }
 
-    childProcess.on('exit', (code) => {
-      if (this.state === SessionState.Running) {
-        this.state = SessionState.Crashed;
-        this.exitCode = code ?? null;
-      }
-    });
+  /**
+   * Send a prompt to Claude and stream the response.
+   *
+   * Emits:
+   * - 'promptStart' (prompt: string) — when prompt is sent
+   * - 'data' (chunk: string) — as response text arrives
+   * - 'promptComplete' (response: string) — when response is fully received
+   * - 'promptError' (error: Error) — if something goes wrong
+   */
+  async sendPrompt(prompt: string): Promise<string> {
+    if (this.state !== SessionState.Running) {
+      throw new Error(`Session "${this.config.name}" is not running`);
+    }
 
-    // PTY doesn't emit 'error' events, but we'll keep this for consistency
-    childProcess.on('error', () => {
-      if (this.state === SessionState.Running) {
-        this.state = SessionState.Crashed;
+    if (this.activeProcess) {
+      throw new Error(`Session "${this.config.name}" is already processing a prompt`);
+    }
+
+    this.emit('promptStart', prompt);
+
+    return new Promise<string>((resolve, reject) => {
+      // Build args: first prompt uses --session-id, subsequent use --resume
+      const args = ['--print', '--output-format', 'text'];
+      if (this.promptCount === 0) {
+        args.push('--session-id', this.claudeSessionId);
+      } else {
+        args.push('--resume', this.claudeSessionId);
       }
+
+      const child = spawn('claude', args, {
+        cwd: this.config.workingDirectory,
+        env: { ...process.env, ...this.config.env },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+
+      this.activeProcess = child;
+      this.pid = child.pid ?? this.pid;
+
+      let response = '';
+
+      child.stdout?.on('data', (chunk: Buffer) => {
+        const text = chunk.toString();
+        response += text;
+        this.emit('data', text);
+      });
+
+      child.stderr?.on('data', (chunk: Buffer) => {
+        // Stderr output from Claude (warnings, debug info)
+        this.emit('stderr', chunk.toString());
+      });
+
+      child.on('error', (err: Error) => {
+        this.activeProcess = null;
+        this.emit('promptError', err);
+        reject(err);
+      });
+
+      child.on('close', (code: number | null) => {
+        this.activeProcess = null;
+        this.promptCount++;
+
+        if (code === 0) {
+          this.emit('promptComplete', response);
+          resolve(response);
+        } else {
+          const err = new Error(`Claude exited with code ${code}`);
+          this.emit('promptError', err);
+          reject(err);
+        }
+      });
+
+      // Write prompt to stdin and close it
+      child.stdin?.write(prompt);
+      child.stdin?.end();
     });
   }
 
+  /**
+   * Check if a prompt is currently being processed.
+   */
+  isProcessing(): boolean {
+    return this.activeProcess !== null;
+  }
+
   async stop(): Promise<void> {
-    if (!this.childProcess || this.state === SessionState.Stopped) {
+    if (this.state === SessionState.Stopped) {
       return;
     }
 
     this.state = SessionState.Stopped;
 
-    const child = this.childProcess;
-
-    // If the process already exited, clean up immediately to avoid deadlock
-    const alreadyDead =
-      child.killed ||
-      (() => {
-        try {
-          process.kill(child.pid, 0);
-          return false;
-        } catch {
-          return true;
-        }
-      })();
-
-    if (alreadyDead) {
-      this.childProcess = null;
-      this.ptyProcess = null;
-      return;
+    // Kill active process if any
+    if (this.activeProcess) {
+      try {
+        this.activeProcess.kill('SIGTERM');
+        // Give it a moment, then force kill
+        setTimeout(() => {
+          if (this.activeProcess) {
+            try { this.activeProcess.kill('SIGKILL'); } catch { /* already dead */ }
+          }
+        }, this.shutdownTimeoutMs);
+      } catch {
+        // Already dead
+      }
+      this.activeProcess = null;
     }
-
-    await new Promise<void>((resolve) => {
-      let resolved = false;
-      const done = () => {
-        if (!resolved) {
-          resolved = true;
-          clearTimeout(gracefulTimeout);
-          clearTimeout(finalTimeout);
-          resolve();
-        }
-      };
-
-      // After graceful timeout, escalate to SIGKILL
-      const gracefulTimeout = setTimeout(() => {
-        child.kill('SIGKILL');
-      }, this.shutdownTimeoutMs);
-
-      // Unconditional final timeout after SIGKILL to prevent infinite hang
-      const finalTimeout = setTimeout(() => {
-        done();
-      }, this.shutdownTimeoutMs + 3000);
-
-      child.on('exit', (code) => {
-        this.exitCode = code ?? null;
-        done();
-      });
-
-      child.kill('SIGTERM');
-    });
-
-    this.childProcess = null;
-    this.ptyProcess = null;
   }
 
   getState(): SessionState {
@@ -197,28 +154,20 @@ export class Session {
       startedAt: this.startedAt,
       workingDirectory: this.config.workingDirectory,
       exitCode: this.exitCode,
+      promptCount: this.promptCount,
     };
   }
 
-  getHandle(): SessionHandle | null {
-    if (this.state !== SessionState.Running || !this.childProcess) {
-      return null;
-    }
-
-    if (!this.childProcess.stdin || !this.childProcess.stdout || !this.childProcess.stderr) {
-      return null;
-    }
-
-    return {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      childProcess: this.childProcess as any,
-      stdin: this.childProcess.stdin,
-      stdout: this.childProcess.stdout,
-      stderr: this.childProcess.stderr,
-    };
+  getSessionId(): string {
+    return this.claudeSessionId;
   }
 
   getExitCode(): number | null {
     return this.exitCode;
+  }
+
+  // Legacy compatibility — not used in prompt mode
+  getHandle(): null {
+    return null;
   }
 }

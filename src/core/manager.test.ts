@@ -1,6 +1,4 @@
-import { EventEmitter } from 'node:events';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
-import * as pty from '@homebridge/node-pty-prebuilt-multiarch';
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs/promises';
@@ -8,72 +6,6 @@ import { SessionManager } from './manager.js';
 import { Session } from './session.js';
 import { SessionState, SessionConfig } from '../types.js';
 import { SessionAlreadyExistsError, SessionNotFoundError } from '../utils/errors.js';
-
-vi.mock('@homebridge/node-pty-prebuilt-multiarch', () => ({
-  spawn: vi.fn(),
-}));
-
-const mockedPtySpawn = vi.mocked(pty.spawn);
-
-interface MockIPty extends EventEmitter {
-  pid: number;
-  write: (data: string) => void;
-  kill: (signal?: string) => void;
-  onData: (callback: (data: string) => void) => void;
-  onExit: (callback: (event: { exitCode: number; signal?: number }) => void) => void;
-  resize: (cols: number, rows: number) => void;
-}
-
-function createMockPty(pid: number = 12345): MockIPty {
-  const ptyEmitter = new EventEmitter() as MockIPty;
-  ptyEmitter.pid = pid;
-
-  let dataCallback: ((data: string) => void) | null = null;
-  let exitCallback: ((event: { exitCode: number; signal?: number }) => void) | null = null;
-
-  ptyEmitter.write = vi.fn(() => {
-    // Simulate writing to pty
-  });
-
-  ptyEmitter.kill = vi.fn((signal?: string) => {
-    process.nextTick(() => {
-      if (exitCallback) {
-        const exitCode = signal === 'SIGKILL' ? 137 : 0;
-        exitCallback({ exitCode, signal: exitCode });
-      }
-    });
-  });
-
-  ptyEmitter.onData = vi.fn((callback: (data: string) => void) => {
-    dataCallback = callback;
-  });
-
-  ptyEmitter.onExit = vi.fn((callback: (event: { exitCode: number; signal?: number }) => void) => {
-    exitCallback = callback;
-  });
-
-  ptyEmitter.resize = vi.fn(() => {
-    // Mock resize
-  });
-
-  // Helper to simulate data from the pty
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (ptyEmitter as any).simulateData = (data: string) => {
-    if (dataCallback) {
-      dataCallback(data);
-    }
-  };
-
-  // Helper to simulate exit
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (ptyEmitter as any).simulateExit = (code: number, signal?: number) => {
-    if (exitCallback) {
-      exitCallback({ exitCode: code, signal });
-    }
-  };
-
-  return ptyEmitter;
-}
 
 function tmpRegistryPath(): string {
   return path.join(
@@ -101,7 +33,6 @@ describe('SessionManager', () => {
   });
 
   it('init() detects stale PIDs and marks Crashed in registry', async () => {
-    // Write a registry file with a "running" session that has a stale PID
     const stalePid = 999999999;
     const data = {
       version: 1,
@@ -120,7 +51,6 @@ describe('SessionManager', () => {
     await fs.mkdir(dir, { recursive: true });
     await fs.writeFile(registryPath, JSON.stringify(data, null, 2), 'utf-8');
 
-    // Mock process.kill to throw ESRCH (process not found)
     const originalKill = process.kill;
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const killMock = vi.fn((_pid: number, _signal?: string | number) => {
@@ -134,7 +64,6 @@ describe('SessionManager', () => {
     try {
       await manager.init();
 
-      // Read registry back and verify it was updated to crashed
       const raw = await fs.readFile(registryPath, 'utf-8');
       const updated = JSON.parse(raw);
       expect(updated.sessions['stale-session'].state).toBe('crashed');
@@ -144,10 +73,6 @@ describe('SessionManager', () => {
   });
 
   it('startSession() creates session and persists to registry', async () => {
-    const mockCp = createMockPty(5000);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    mockedPtySpawn.mockReturnValue(mockCp as any);
-
     await manager.init();
 
     const config: SessionConfig = {
@@ -165,14 +90,10 @@ describe('SessionManager', () => {
     const raw = await fs.readFile(registryPath, 'utf-8');
     const data = JSON.parse(raw);
     expect(data.sessions['my-session']).toBeDefined();
-    expect(data.sessions['my-session'].pid).toBe(5000);
+    expect(data.sessions['my-session'].pid).toBe(0); // Prompt-based sessions have no persistent PID
   });
 
   it('stopSession() removes from registry', async () => {
-    const mockCp = createMockPty(6000);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    mockedPtySpawn.mockReturnValue(mockCp as any);
-
     await manager.init();
     await manager.startSession({ name: 'remove-me', workingDirectory: '/tmp/work' });
     expect(manager.listSessions()).toHaveLength(1);
@@ -180,19 +101,12 @@ describe('SessionManager', () => {
     await manager.stopSession('remove-me');
     expect(manager.listSessions()).toHaveLength(0);
 
-    // Verify registry file no longer contains the entry
     const raw = await fs.readFile(registryPath, 'utf-8');
     const data = JSON.parse(raw);
     expect(data.sessions['remove-me']).toBeUndefined();
   });
 
   it('listSessions() returns accurate info', async () => {
-    let pidCounter = 7000;
-    mockedPtySpawn.mockImplementation(() => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return createMockPty(pidCounter++) as any;
-    });
-
     await manager.init();
     await manager.startSession({ name: 'alpha', workingDirectory: '/tmp/a' });
     await manager.startSession({ name: 'beta', workingDirectory: '/tmp/b' });
@@ -206,15 +120,11 @@ describe('SessionManager', () => {
     for (const s of sessions) {
       expect(s.state).toBe(SessionState.Running);
       expect(typeof s.pid).toBe('number');
-      expect(s.pid).toBeGreaterThan(0);
+      expect(s.pid).toBe(0); // Prompt-based sessions
     }
   });
 
   it('duplicate name throws SessionAlreadyExistsError', async () => {
-    const mockCp = createMockPty(8000);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    mockedPtySpawn.mockReturnValue(mockCp as any);
-
     await manager.init();
     await manager.startSession({ name: 'dup-session', workingDirectory: '/tmp/work' });
 
@@ -236,12 +146,6 @@ describe('SessionManager', () => {
   });
 
   it('stopAll() clears everything', async () => {
-    let pidCounter = 9000;
-    mockedPtySpawn.mockImplementation(() => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return createMockPty(pidCounter++) as any;
-    });
-
     await manager.init();
     await manager.startSession({ name: 'a', workingDirectory: '/tmp/a' });
     await manager.startSession({ name: 'b', workingDirectory: '/tmp/b' });
@@ -251,30 +155,24 @@ describe('SessionManager', () => {
     await manager.stopAll();
     expect(manager.listSessions()).toHaveLength(0);
 
-    // Verify registry is empty
     const raw = await fs.readFile(registryPath, 'utf-8');
     const data = JSON.parse(raw);
     expect(Object.keys(data.sessions)).toHaveLength(0);
   });
 
   it('getSessionInfo() returns info for in-memory sessions', async () => {
-    const mockCp = createMockPty(10000);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    mockedPtySpawn.mockReturnValue(mockCp as any);
-
     await manager.init();
     await manager.startSession({ name: 'test-session', workingDirectory: '/tmp/test' });
 
     const info = manager.getSessionInfo('test-session');
     expect(info).toBeDefined();
     expect(info?.name).toBe('test-session');
-    expect(info?.pid).toBe(10000);
+    expect(info?.pid).toBe(0); // Prompt-based sessions
     expect(info?.state).toBe(SessionState.Running);
     expect(info?.workingDirectory).toBe('/tmp/test');
   });
 
   it('getSessionInfo() returns info from registry for cross-process sessions', async () => {
-    // Simulate a session started by another process
     const data = {
       version: 1,
       sessions: {
@@ -292,11 +190,9 @@ describe('SessionManager', () => {
     await fs.mkdir(dir, { recursive: true });
     await fs.writeFile(registryPath, JSON.stringify(data, null, 2), 'utf-8');
 
-    // Mock process.kill to pretend the PID is alive
     const originalKill = process.kill;
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const killMock = vi.fn((_pid: number, _signal?: string | number) => {
-      // Return true to indicate process exists
       return true;
     });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -305,10 +201,8 @@ describe('SessionManager', () => {
     try {
       await manager.init();
 
-      // Session should not be in memory
       expect(manager.getSession('cross-process-session')).toBeUndefined();
 
-      // But getSessionInfo() should return info from registry
       const info = manager.getSessionInfo('cross-process-session');
       expect(info).toBeDefined();
       expect(info?.name).toBe('cross-process-session');
@@ -326,18 +220,25 @@ describe('SessionManager', () => {
     expect(info).toBeUndefined();
   });
 
-  it('getSessionInfo() prefers in-memory session over registry entry', async () => {
-    // Create a registry entry
+  it('adoptSession() returns existing in-memory session', async () => {
+    await manager.init();
+    const session = await manager.startSession({ name: 'adopt-me', workingDirectory: '/tmp/a' });
+
+    const adopted = await manager.adoptSession('adopt-me');
+    expect(adopted).toBe(session);
+  });
+
+  it('adoptSession() creates new session from registry entry', async () => {
     const data = {
       version: 1,
       sessions: {
-        'test-session': {
-          name: 'test-session',
-          pid: 12000,
+        'orphan-session': {
+          name: 'orphan-session',
+          pid: 99999,
           state: 'stopped',
           startedAt: new Date().toISOString(),
-          workingDirectory: '/tmp/registry',
-          exitCode: 0,
+          workingDirectory: '/tmp/orphan',
+          exitCode: null,
         },
       },
     };
@@ -347,23 +248,127 @@ describe('SessionManager', () => {
 
     await manager.init();
 
-    // Now start a session with the same name (this would fail in real code due to duplicate check,
-    // but we're testing the priority logic)
-    const mockCp = createMockPty(13000);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    mockedPtySpawn.mockReturnValue(mockCp as any);
+    const adopted = await manager.adoptSession('orphan-session');
+    expect(adopted).toBeInstanceOf(Session);
+    expect(adopted.getState()).toBe(SessionState.Running);
+    expect(adopted.getInfo().workingDirectory).toBe('/tmp/orphan');
+  });
 
-    // Remove the registry entry first to allow starting
-    await fs.writeFile(registryPath, JSON.stringify({ version: 1, sessions: {} }, null, 2), 'utf-8');
+  it('adoptSession() throws for nonexistent session', async () => {
     await manager.init();
+    await expect(manager.adoptSession('nonexistent')).rejects.toThrow(SessionNotFoundError);
+  });
 
-    await manager.startSession({ name: 'test-session', workingDirectory: '/tmp/memory' });
+  describe('refreshRegistry()', () => {
+    it('discovers new sessions added to registry by another process', async () => {
+      await manager.init();
 
-    // getSessionInfo() should return the in-memory session's info
-    const info = manager.getSessionInfo('test-session');
-    expect(info).toBeDefined();
-    expect(info?.pid).toBe(13000);
-    expect(info?.state).toBe(SessionState.Running);
-    expect(info?.workingDirectory).toBe('/tmp/memory');
+      // Verify initially empty
+      expect(manager.listSessions()).toHaveLength(0);
+
+      // Simulate another process adding a session to the registry file
+      const dir = path.dirname(registryPath);
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(
+        registryPath,
+        JSON.stringify({
+          version: 1,
+          sessions: {
+            'external-session': {
+              name: 'external-session',
+              pid: 999999999,
+              state: 'running',
+              startedAt: new Date().toISOString(),
+              workingDirectory: '/tmp/external',
+              exitCode: null,
+            },
+          },
+        }),
+      );
+
+      await manager.refreshRegistry();
+
+      const sessions = manager.listSessions();
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0].name).toBe('external-session');
+      // PID 999999999 doesn't exist, so it should be marked crashed
+      expect(sessions[0].state).toBe(SessionState.Crashed);
+    });
+
+    it('keeps prompt-based sessions (pid=0) as running', async () => {
+      await manager.init();
+
+      const dir = path.dirname(registryPath);
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(
+        registryPath,
+        JSON.stringify({
+          version: 1,
+          sessions: {
+            'prompt-session': {
+              name: 'prompt-session',
+              pid: 0,
+              state: 'running',
+              startedAt: new Date().toISOString(),
+              workingDirectory: '/tmp/prompt',
+              exitCode: null,
+            },
+          },
+        }),
+      );
+
+      await manager.refreshRegistry();
+
+      const sessions = manager.listSessions();
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0].name).toBe('prompt-session');
+      // pid=0 means prompt-based — no PID check, stays Running
+      expect(sessions[0].state).toBe(SessionState.Running);
+    });
+
+    it('does not duplicate sessions already tracked in memory', async () => {
+      await manager.init();
+      await manager.startSession({ name: 'in-memory', workingDirectory: '/tmp/m' });
+
+      await manager.refreshRegistry();
+
+      const sessions = manager.listSessions();
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0].name).toBe('in-memory');
+    });
+
+    it('removes registry entries that were deleted on disk', async () => {
+      // Start with a session in the registry
+      const dir = path.dirname(registryPath);
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(
+        registryPath,
+        JSON.stringify({
+          version: 1,
+          sessions: {
+            'will-be-removed': {
+              name: 'will-be-removed',
+              pid: 999999999,
+              state: 'stopped',
+              startedAt: new Date().toISOString(),
+              workingDirectory: '/tmp/gone',
+              exitCode: 0,
+            },
+          },
+        }),
+      );
+
+      await manager.init();
+      expect(manager.listSessions()).toHaveLength(1);
+
+      // Another process removes the session from registry
+      await fs.writeFile(
+        registryPath,
+        JSON.stringify({ version: 1, sessions: {} }),
+      );
+
+      await manager.refreshRegistry();
+      expect(manager.listSessions()).toHaveLength(0);
+    });
   });
 });

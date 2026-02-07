@@ -16,6 +16,7 @@ const exampleSessions: SessionInfo[] = [
     state: SessionState.Running,
     startedAt: new Date(Date.now() - 23 * 60 * 1000), // 23 minutes ago
     workingDirectory: '/home/user/projects/project-a',
+    promptCount: 5,
   },
   {
     name: 'project-b',
@@ -23,6 +24,7 @@ const exampleSessions: SessionInfo[] = [
     state: SessionState.Running,
     startedAt: new Date(Date.now() - 90 * 60 * 1000), // 90 minutes ago
     workingDirectory: '/home/user/projects/project-b',
+    promptCount: 12,
   },
   {
     name: 'project-c',
@@ -30,6 +32,7 @@ const exampleSessions: SessionInfo[] = [
     state: SessionState.Stopped,
     startedAt: null,
     workingDirectory: '/home/user/projects/project-c',
+    promptCount: 0,
   },
 ];
 
@@ -76,6 +79,7 @@ function Example4() {
     state: i % 3 === 0 ? SessionState.Stopped : SessionState.Running,
     startedAt: i % 3 === 0 ? null : new Date(Date.now() - i * 5 * 60 * 1000),
     workingDirectory: `/home/user/sessions/session-${i}`,
+    promptCount: i,
   }));
 
   return (

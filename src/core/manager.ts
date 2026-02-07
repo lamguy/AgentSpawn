@@ -31,7 +31,9 @@ export class SessionManager {
     const data = await this.registry.load();
 
     for (const [name, entry] of Object.entries(data.sessions)) {
-      if (entry.state === SessionState.Running) {
+      if (entry.state === SessionState.Running && entry.pid > 0) {
+        // Only check PID liveness for sessions with a real persistent process.
+        // Prompt-based sessions (pid === 0) have no persistent process to check.
         let alive = false;
         try {
           process.kill(entry.pid, 0);
@@ -103,7 +105,7 @@ export class SessionManager {
       throw new SessionNotFoundError(name);
     }
 
-    if (entry.state === SessionState.Running) {
+    if (entry.state === SessionState.Running && entry.pid > 0) {
       try {
         process.kill(entry.pid, 'SIGTERM');
       } catch {
@@ -116,14 +118,51 @@ export class SessionManager {
   }
 
   async stopAll(): Promise<void> {
-    const names = [...this.sessions.keys()];
-    for (const name of names) {
+    // Stop all in-memory sessions
+    const inMemoryNames = [...this.sessions.keys()];
+    for (const name of inMemoryNames) {
+      await this.stopSession(name);
+    }
+
+    // Also clean up registry-only entries (sessions started by other processes)
+    const registryNames = [...this.registryEntries.keys()];
+    for (const name of registryNames) {
       await this.stopSession(name);
     }
   }
 
   getSession(name: string): Session | undefined {
     return this.sessions.get(name);
+  }
+
+  /**
+   * Adopt a registry-only session into this process.
+   * In prompt-based mode there is no persistent child process to kill —
+   * we simply create a new in-memory Session with the same config.
+   */
+  async adoptSession(name: string): Promise<Session> {
+    // Already in memory — nothing to do
+    const existing = this.sessions.get(name);
+    if (existing) {
+      return existing;
+    }
+
+    // Must exist in registry
+    const entry = this.registryEntries.get(name);
+    if (!entry) {
+      throw new SessionNotFoundError(name);
+    }
+
+    // Remove old registry entry and start a fresh session
+    await this.registry.removeEntry(name);
+    this.registryEntries.delete(name);
+
+    const config: SessionConfig = {
+      name: entry.name,
+      workingDirectory: entry.workingDirectory,
+    };
+
+    return this.startSession(config);
   }
 
   /**
@@ -147,10 +186,47 @@ export class SessionManager {
         startedAt: entry.startedAt ? new Date(entry.startedAt) : null,
         workingDirectory: entry.workingDirectory,
         exitCode: entry.exitCode ?? null,
+        promptCount: 0,
       };
     }
 
     return undefined;
+  }
+
+  /**
+   * Re-read the on-disk registry and merge any new entries.
+   * Called periodically by the TUI so externally-started sessions are discovered.
+   */
+  async refreshRegistry(): Promise<void> {
+    const data = await this.registry.load();
+
+    for (const [name, entry] of Object.entries(data.sessions)) {
+      // Skip sessions already tracked in memory (either as Session or RegistryEntry)
+      if (this.sessions.has(name) || this.registryEntries.has(name)) {
+        continue;
+      }
+
+      // Only check PID liveness for sessions with a real persistent process.
+      // Prompt-based sessions (pid === 0) have no persistent process to check.
+      if (entry.state === SessionState.Running && entry.pid > 0) {
+        try {
+          process.kill(entry.pid, 0);
+        } catch {
+          entry.state = SessionState.Crashed;
+        }
+      }
+
+      this.registryEntries.set(name, entry);
+    }
+
+    // Remove registry entries that no longer exist on disk
+    // (e.g. stopped by another process)
+    const diskNames = new Set(Object.keys(data.sessions));
+    for (const name of this.registryEntries.keys()) {
+      if (!diskNames.has(name) && !this.sessions.has(name)) {
+        this.registryEntries.delete(name);
+      }
+    }
   }
 
   listSessions(): SessionInfo[] {
@@ -173,6 +249,7 @@ export class SessionManager {
           startedAt: entry.startedAt ? new Date(entry.startedAt) : null,
           workingDirectory: entry.workingDirectory,
           exitCode: entry.exitCode ?? null,
+          promptCount: 0,
         });
       }
     }

@@ -4,9 +4,11 @@ import type { SessionManager } from '../core/manager.js';
 import type { Router } from '../io/router.js';
 import { SessionManagerAdapter, RouterAdapter } from './adapters.js';
 import { OutputCapture } from './output-capture.js';
-import type { TUIOptions, TUIState } from './types.js';
-import { SessionState } from '../types.js';
+import type { TUIOptions, TUIState, TUIAction, StatusMessage } from './types.js';
 import { TUIApp } from './components/TUIApp.js';
+
+/** How long status messages persist before auto-clearing (ms). */
+const STATUS_MESSAGE_TTL = 5000;
 
 /**
  * TUI instance — manages render loop, state updates, and cleanup.
@@ -16,7 +18,6 @@ export class TUI {
   private renderInstance: ReturnType<typeof render> | null = null;
   private updateInterval: NodeJS.Timeout | null = null;
   private resizeHandler: (() => void) | null = null;
-  private rawInputHandler: ((data: Buffer) => void) | null = null;
 
   constructor(
     private readonly manager: SessionManager,
@@ -26,7 +27,6 @@ export class TUI {
     private readonly outputCapture: OutputCapture,
     private readonly options?: TUIOptions,
   ) {
-    // Initialize state
     const attachedSessionName = routerAdapter.getActiveSession() ?? null;
     this.state = {
       sessions: managerAdapter.getSessions(),
@@ -34,7 +34,43 @@ export class TUI {
       attachedSessionName,
       outputLines: [],
       isShuttingDown: false,
+      isProcessing: false,
       mode: attachedSessionName ? 'attached' : 'navigation',
+      overlayStack: [],
+      statusMessage: null,
+    };
+  }
+
+  /**
+   * Build the common TUIApp props (shared between start() and forceRerender()).
+   */
+  private buildAppProps() {
+    return {
+      initialState: this.state,
+      isProcessing: this.state.isProcessing,
+      onStateChange: (newState: TUIState) => {
+        const oldMode = this.state.mode;
+        const newMode = newState.mode;
+        this.state = newState;
+
+        if (oldMode !== newMode) {
+          if (newMode === 'attached' && newState.attachedSessionName) {
+            this.attachToSession(newState.attachedSessionName);
+          } else if (newMode === 'navigation' && oldMode === 'attached') {
+            this.detachFromSession();
+          }
+        }
+      },
+      onExit: () => {
+        this.stop();
+        process.exit(0);
+      },
+      onSendPrompt: (sessionName: string, prompt: string) => {
+        this.handleSendPrompt(sessionName, prompt);
+      },
+      onAction: (action: TUIAction) => {
+        this.executeAction(action);
+      },
     };
   }
 
@@ -42,43 +78,16 @@ export class TUI {
    * Launch the TUI.
    */
   start(): void {
-    // Render the app with keyboard handling and exit callback
     this.renderInstance = render(
-      React.createElement(TUIApp, {
-        initialState: this.state,
-        onStateChange: (newState: TUIState) => {
-          // Detect mode transitions and handle router attach/detach
-          const oldMode = this.state.mode;
-          const newMode = newState.mode;
-
-          // Sync external state updates from TUIApp
-          this.state = newState;
-
-          // Handle mode transitions
-          if (oldMode !== newMode) {
-            if (newMode === 'attached' && newState.attachedSessionName) {
-              // Transition to attached mode
-              this.attachToSession(newState.attachedSessionName);
-            } else if (newMode === 'navigation' && oldMode === 'attached') {
-              // Transition to navigation mode
-              this.detachFromSession();
-            }
-          }
-        },
-        onExit: () => {
-          // Handle quit signal from keyboard
-          this.stop();
-          process.exit(0);
-        },
-      }),
+      React.createElement(TUIApp, this.buildAppProps()),
     );
 
-    // Set up periodic state updates (poll for changes)
+    // Periodic state updates
     this.updateInterval = setInterval(() => {
       this.updateState();
-    }, 500); // Update every 500ms
+    }, 500);
 
-    // Handle terminal resize events
+    // Handle terminal resize
     this.resizeHandler = (): void => {
       this.forceRerender();
     };
@@ -91,30 +100,16 @@ export class TUI {
   stop(): void {
     this.state.isShuttingDown = true;
 
-    // Detach from any attached session before cleanup
-    if (this.state.mode === 'attached') {
-      // Call router.detach() if attached
-      if (this.routerAdapter.getActiveSession()) {
-        this.router.detach();
-      }
-    }
-
-    // Clear update interval
     if (this.updateInterval) {
       clearInterval(this.updateInterval);
       this.updateInterval = null;
     }
 
-    // Remove resize handler
     if (this.resizeHandler) {
       process.stdout.removeListener('resize', this.resizeHandler);
       this.resizeHandler = null;
     }
 
-    // Clear raw input handler
-    this.rawInputHandler = null;
-
-    // Unmount render instance (only if still mounted)
     if (this.renderInstance) {
       this.renderInstance.unmount();
       this.renderInstance = null;
@@ -125,48 +120,37 @@ export class TUI {
    * Update TUI state from adapters.
    */
   private updateState(): void {
+    // Re-read disk registry to discover sessions started by other processes
+    this.manager.refreshRegistry().catch(() => {
+      // Ignore registry read errors — stale data is acceptable
+    });
+
     const sessions = this.managerAdapter.getSessions();
-    const attachedSessionName = this.routerAdapter.getActiveSession() ?? null;
-    const oldMode = this.state.mode;
-
-    // Update sessions
     this.state.sessions = sessions;
-    this.state.attachedSessionName = attachedSessionName;
-
-    // Sync mode with attachment state
-    // If router detached externally, switch back to navigation mode
-    if (!attachedSessionName && this.state.mode === 'attached') {
-      this.state.mode = 'navigation';
-
-      // Mode transition detected: attached -> navigation
-      if (oldMode === 'attached') {
-        // Router was detached externally, no need to call detach again
-      }
-    }
-    // If router attached externally, switch to attached mode
-    if (attachedSessionName && this.state.mode === 'navigation') {
-      this.state.mode = 'attached';
-
-      // Mode transition detected: navigation -> attached
-      if (oldMode === 'navigation') {
-        // Router was attached externally, no need to call attach again
-      }
-    }
 
     // Auto-select first session if none selected
     if (!this.state.selectedSessionName && sessions.length > 0) {
       this.state.selectedSessionName = sessions[0].name;
     }
 
-    // Update output lines for selected session
-    if (this.state.selectedSessionName) {
-      const lines = this.outputCapture.getLines(this.state.selectedSessionName);
-      this.state.outputLines = lines.map((line) => line.text);
+    // Update output lines — in attached mode, show attached session's output;
+    // otherwise show selected session's output
+    const outputSessionName =
+      this.state.mode === 'attached' && this.state.attachedSessionName
+        ? this.state.attachedSessionName
+        : this.state.selectedSessionName;
+
+    if (outputSessionName) {
+      this.state.outputLines = this.outputCapture.getLines(outputSessionName);
     } else {
       this.state.outputLines = [];
     }
 
-    // Trigger re-render
+    // Auto-clear expired status messages
+    if (this.state.statusMessage && Date.now() > this.state.statusMessage.expiresAt) {
+      this.state.statusMessage = null;
+    }
+
     this.forceRerender();
   }
 
@@ -176,154 +160,226 @@ export class TUI {
   private forceRerender(): void {
     if (this.renderInstance && !this.state.isShuttingDown) {
       this.renderInstance.rerender(
-        React.createElement(TUIApp, {
-          initialState: this.state,
-          onStateChange: (newState: TUIState) => {
-            // Detect mode transitions and handle router attach/detach
-            const oldMode = this.state.mode;
-            const newMode = newState.mode;
-
-            // Sync external state updates from TUIApp
-            this.state = newState;
-
-            // Handle mode transitions
-            if (oldMode !== newMode) {
-              if (newMode === 'attached' && newState.attachedSessionName) {
-                // Transition to attached mode
-                this.attachToSession(newState.attachedSessionName);
-              } else if (newMode === 'navigation' && oldMode === 'attached') {
-                // Transition to navigation mode
-                this.detachFromSession();
-              }
-            }
-          },
-          onExit: () => {
-            this.stop();
-            process.exit(0);
-          },
-        }),
+        React.createElement(TUIApp, this.buildAppProps()),
       );
     }
   }
 
   /**
-   * Attach to a session by unmounting the TUI and giving the session direct terminal control.
-   * This is called when the TUI transitions to attached mode.
-   *
-   * @param sessionName - The name of the session to attach to
+   * Execute a TUI action (async side effect from keybinding handlers).
    */
-  private attachToSession(sessionName: string): void {
+  private executeAction(action: TUIAction): void {
+    switch (action.kind) {
+      case 'create-session':
+        this.handleCreateSession(action.name, action.directory);
+        break;
+      case 'stop-session':
+        this.handleStopSession(action.sessionName);
+        break;
+      case 'restart-session':
+        this.handleRestartSession(action.sessionName);
+        break;
+      case 'stop-all':
+        this.handleStopAll();
+        break;
+      case 'send-prompt':
+        this.handleSendPrompt(action.sessionName, action.prompt);
+        break;
+    }
+  }
+
+  /**
+   * Create a new session from the session-creation overlay.
+   */
+  private async handleCreateSession(name: string, directory: string): Promise<void> {
     try {
-      const session = this.manager.getSession(sessionName);
-      if (!session) {
-        process.stderr.write(`Cannot attach: session "${sessionName}" not found.\n`);
-        // Revert to navigation mode
-        this.state.mode = 'navigation';
-        this.state.attachedSessionName = null;
-        this.forceRerender();
-        return;
-      }
-
-      const handle = session.getHandle();
-      if (!handle) {
-        process.stderr.write(
-          `Cannot attach: session "${sessionName}" is not running.\n`,
-        );
-        // Revert to navigation mode
-        this.state.mode = 'navigation';
-        this.state.attachedSessionName = null;
-        this.forceRerender();
-        return;
-      }
-
-      // Step 1: Unmount Ink TUI to release terminal control
-      if (this.renderInstance) {
-        this.renderInstance.unmount();
-        this.renderInstance = null;
-      }
-
-      // Step 2: Clear update interval (no need to poll while attached)
-      if (this.updateInterval) {
-        clearInterval(this.updateInterval);
-        this.updateInterval = null;
-      }
-
-      // Step 3: Call router.attach() to forward session I/O to terminal
-      // When user presses Escape, router will call our callback to detach
-      this.router.attach(session, {
-        onDetachRequest: () => {
-          // User pressed Escape - detach and restore TUI
-          this.detachFromSession();
-        }
+      const session = await this.manager.startSession({
+        name,
+        workingDirectory: directory || process.cwd(),
       });
+      this.outputCapture.captureSession(name, session);
+
+      // Pop the session-creation overlay, select the new session
+      this.state.overlayStack = [];
+      this.state.selectedSessionName = name;
+      this.setStatusMessage(`Session "${name}" created`, 'success');
+      this.forceRerender();
     } catch (err) {
-      process.stderr.write(`Failed to attach to session "${sessionName}": ${err}\n`);
-      // Revert to navigation mode
-      this.state.mode = 'navigation';
-      this.state.attachedSessionName = null;
+      // Show error in the session-creation overlay
+      const top = this.state.overlayStack[this.state.overlayStack.length - 1];
+      if (top?.kind === 'session-creation') {
+        const message = err instanceof Error ? err.message : 'Failed to create session';
+        this.state.overlayStack = [
+          ...this.state.overlayStack.slice(0, -1),
+          {
+            ...top,
+            isSubmitting: false,
+            errors: { ...top.errors, name: message },
+          },
+        ];
+      } else {
+        this.setStatusMessage(
+          err instanceof Error ? err.message : 'Failed to create session',
+          'error',
+        );
+      }
       this.forceRerender();
     }
   }
 
   /**
-   * Detach from the currently attached session and restore the TUI.
-   * This is called when the user presses Escape in attached mode.
+   * Stop a session.
+   */
+  private async handleStopSession(sessionName: string): Promise<void> {
+    try {
+      await this.manager.stopSession(sessionName);
+      this.setStatusMessage(`Session "${sessionName}" stopped`, 'success');
+    } catch (err) {
+      this.setStatusMessage(
+        err instanceof Error ? err.message : `Failed to stop "${sessionName}"`,
+        'error',
+      );
+    }
+    this.forceRerender();
+  }
+
+  /**
+   * Restart a session (stop then start with same config).
+   */
+  private async handleRestartSession(sessionName: string): Promise<void> {
+    try {
+      // Get session info before stopping
+      const info = this.manager.getSession(sessionName)?.getInfo();
+      const workingDirectory = info?.workingDirectory ?? process.cwd();
+
+      await this.manager.stopSession(sessionName);
+
+      const session = await this.manager.startSession({
+        name: sessionName,
+        workingDirectory,
+      });
+      this.outputCapture.captureSession(sessionName, session);
+      this.setStatusMessage(`Session "${sessionName}" restarted`, 'success');
+    } catch (err) {
+      this.setStatusMessage(
+        err instanceof Error ? err.message : `Failed to restart "${sessionName}"`,
+        'error',
+      );
+    }
+    this.forceRerender();
+  }
+
+  /**
+   * Stop all sessions.
+   */
+  private async handleStopAll(): Promise<void> {
+    try {
+      await this.manager.stopAll();
+      this.setStatusMessage('All sessions stopped', 'success');
+    } catch (err) {
+      this.setStatusMessage(
+        err instanceof Error ? err.message : 'Failed to stop all sessions',
+        'error',
+      );
+    }
+    this.forceRerender();
+  }
+
+  /**
+   * Set a transient status message that auto-clears.
+   */
+  private setStatusMessage(text: string, level: StatusMessage['level']): void {
+    this.state.statusMessage = {
+      text,
+      level,
+      expiresAt: Date.now() + STATUS_MESSAGE_TTL,
+    };
+  }
+
+  /**
+   * Enter attached mode for a session. TUI stays rendered.
+   */
+  private attachToSession(sessionName: string): void {
+    // Adopt session if not in memory (started by another process)
+    this.ensureSession(sessionName).then((session) => {
+      if (session) {
+        this.outputCapture.captureSession(sessionName, session);
+      }
+    }).catch(() => {
+      // If adoption fails, revert to navigation
+      this.state.mode = 'navigation';
+      this.state.attachedSessionName = null;
+      this.setStatusMessage(`Failed to attach to "${sessionName}"`, 'error');
+      this.forceRerender();
+    });
+  }
+
+  /**
+   * Exit attached mode, return to navigation.
    */
   private detachFromSession(): void {
-    // Step 1: Detach from router (restores TTY state, removes listeners)
-    if (this.routerAdapter.getActiveSession()) {
-      this.router.detach();
-    }
-
-    // Step 2: Update state
     this.state.attachedSessionName = null;
     this.state.mode = 'navigation';
+    this.state.isProcessing = false;
+  }
 
-    // Step 3: Restart update interval
-    this.updateInterval = setInterval(() => {
-      this.updateState();
-    }, 500);
+  /**
+   * Handle a prompt submission from the InputBar.
+   */
+  private async handleSendPrompt(sessionName: string, prompt: string): Promise<void> {
+    const session = await this.ensureSession(sessionName);
+    if (!session) {
+      this.outputCapture.appendLine(sessionName, 'Error: Session not found', true);
+      this.forceRerender();
+      return;
+    }
 
-    // Step 4: Re-render Ink TUI
-    this.start();
+    // Set processing state
+    this.state.isProcessing = true;
+    this.forceRerender();
+
+    try {
+      await session.sendPrompt(prompt);
+    } catch {
+      // Error already emitted by session and captured by OutputCapture
+    } finally {
+      this.state.isProcessing = false;
+      this.forceRerender();
+    }
+  }
+
+  /**
+   * Get or adopt a session by name.
+   */
+  private async ensureSession(sessionName: string) {
+    let session = this.manager.getSession(sessionName);
+    if (!session) {
+      try {
+        session = await this.manager.adoptSession(sessionName);
+        this.outputCapture.captureSession(sessionName, session);
+      } catch {
+        return null;
+      }
+    }
+    return session;
   }
 }
 
 /**
  * Launch the TUI for AgentSpawn.
- *
- * @param manager - The SessionManager instance
- * @param router - The Router instance
- * @param options - Optional TUI configuration
- * @returns A TUI instance
  */
 export function launchTUI(
   manager: SessionManager,
   router: Router,
   options?: TUIOptions,
 ): TUI {
-  // Create adapters
   const managerAdapter = new SessionManagerAdapter(manager);
   const routerAdapter = new RouterAdapter(router);
 
-  // Create output capture
   const outputCapture = new OutputCapture({
     maxLinesPerSession: 1000,
-    captureStderr: true,
   });
 
-  // Capture output from all running sessions
-  const sessions = manager.listSessions();
-  for (const sessionInfo of sessions) {
-    if (sessionInfo.state === SessionState.Running) {
-      const session = manager.getSession(sessionInfo.name);
-      if (session) {
-        outputCapture.captureSession(sessionInfo.name, session);
-      }
-    }
-  }
-
-  // Create and start TUI
   const tui = new TUI(
     manager,
     router,

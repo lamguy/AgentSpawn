@@ -5,6 +5,16 @@ import { TUIApp } from '../../src/tui/components/TUIApp.js';
 import type { TUIState, OutputLine } from '../../src/tui/types.js';
 import { SessionState } from '../../src/types.js';
 
+/** Helper to create OutputLine objects from plain text strings. */
+function makeOutputLines(texts: string[], sessionName = ''): OutputLine[] {
+  return texts.map((text) => ({
+    sessionName,
+    text,
+    timestamp: new Date(),
+    isError: false,
+  }));
+}
+
 /**
  * Integration tests for the TUI application.
  *
@@ -19,6 +29,22 @@ import { SessionState } from '../../src/types.js';
  * Uses ink-testing-library to render components in a test environment
  * without requiring a real terminal.
  */
+
+function makeState(overrides?: Partial<TUIState>): TUIState {
+  return {
+    sessions: [],
+    selectedSessionName: null,
+    attachedSessionName: null,
+    outputLines: [],
+    isShuttingDown: false,
+    mode: 'navigation',
+    isProcessing: false,
+    overlayStack: [],
+    statusMessage: null,
+    ...overrides,
+  };
+}
+
 describe('TUI Integration Tests', () => {
   let mockOnExit: ReturnType<typeof vi.fn>;
   let mockOnStateChange: ReturnType<typeof vi.fn>;
@@ -48,13 +74,7 @@ describe('TUI Integration Tests', () => {
 
   describe('TUI Launch and Initial Rendering', () => {
     it('should launch successfully with empty state', () => {
-      const initialState: TUIState = {
-        sessions: [],
-        selectedSessionName: null,
-        attachedSessionName: null,
-        outputLines: [],
-        isShuttingDown: false,
-      };
+      const initialState = makeState();
 
       const { lastFrame } = render(
         <TUIApp
@@ -68,24 +88,24 @@ describe('TUI Integration Tests', () => {
 
       // Verify header is present
       expect(output).toContain('AgentSpawn');
-      expect(output).toContain('[0 sessions]');
+      expect(output).toContain('0 sessions');
 
-      // Verify status bar is present
-      expect(output).toContain('[Tab]');
-      expect(output).toContain('switch');
-      expect(output).toContain('[Enter]');
-      expect(output).toContain('[q]');
-      expect(output).toContain('quit');
+      // Verify status bar shortcuts are present (new format: no brackets)
+      expect(output).toContain('Tab');
+      expect(output).toContain('next');
+      expect(output).toContain('Enter');
+      expect(output).toContain('attach');
+      expect(output).toContain('help');
 
       // Verify session list shows empty state
       expect(output).toContain('No sessions');
 
       // Verify output pane shows empty state
-      expect(output).toContain('No session attached');
+      expect(output).toContain('Select a session to view output');
     });
 
     it('should launch successfully with populated state', () => {
-      const initialState: TUIState = {
+      const initialState = makeState({
         sessions: [
           {
             name: 'project-a',
@@ -93,6 +113,7 @@ describe('TUI Integration Tests', () => {
             state: SessionState.Running,
             startedAt: new Date('2025-01-01T12:00:00Z'),
             workingDirectory: '/home/user/project-a',
+            promptCount: 3,
           },
           {
             name: 'project-b',
@@ -100,13 +121,11 @@ describe('TUI Integration Tests', () => {
             state: SessionState.Running,
             startedAt: new Date('2025-01-01T12:05:00Z'),
             workingDirectory: '/home/user/project-b',
+            promptCount: 1,
           },
         ],
         selectedSessionName: 'project-a',
-        attachedSessionName: null,
-        outputLines: [],
-        isShuttingDown: false,
-      };
+      });
 
       const { lastFrame } = render(
         <TUIApp
@@ -119,14 +138,14 @@ describe('TUI Integration Tests', () => {
       const output = lastFrame() || '';
 
       // Verify header shows session count
-      expect(output).toContain('[2 sessions]');
+      expect(output).toContain('2 sessions');
 
       // Verify session list displays both sessions
       expect(output).toContain('project-a');
       expect(output).toContain('project-b');
 
-      // Verify status indicators
-      expect(output).toContain('[running]');
+      // Verify Unicode status symbols (filled circle for running)
+      expect(output).toContain('\u25CF');
 
       // Verify selected session details
       expect(output).toContain('/home/user/project-a');
@@ -138,13 +157,7 @@ describe('TUI Integration Tests', () => {
       process.stdout.columns = 70;
       process.stdout.rows = 15;
 
-      const initialState: TUIState = {
-        sessions: [],
-        selectedSessionName: null,
-        attachedSessionName: null,
-        outputLines: [],
-        isShuttingDown: false,
-      };
+      const initialState = makeState();
 
       const { lastFrame } = render(
         <TUIApp
@@ -171,8 +184,8 @@ describe('TUI Integration Tests', () => {
   });
 
   describe('Session List Display', () => {
-    it('should display all sessions with correct status badges', () => {
-      const initialState: TUIState = {
+    it('should display all sessions with correct status symbols', () => {
+      const initialState = makeState({
         sessions: [
           {
             name: 'running-session',
@@ -180,6 +193,7 @@ describe('TUI Integration Tests', () => {
             state: SessionState.Running,
             startedAt: new Date(),
             workingDirectory: '/tmp/running',
+            promptCount: 0,
           },
           {
             name: 'stopped-session',
@@ -187,6 +201,7 @@ describe('TUI Integration Tests', () => {
             state: SessionState.Stopped,
             startedAt: new Date(),
             workingDirectory: '/tmp/stopped',
+            promptCount: 0,
           },
           {
             name: 'crashed-session',
@@ -195,13 +210,11 @@ describe('TUI Integration Tests', () => {
             startedAt: new Date(),
             workingDirectory: '/tmp/crashed',
             exitCode: 1,
+            promptCount: 0,
           },
         ],
         selectedSessionName: 'running-session',
-        attachedSessionName: null,
-        outputLines: [],
-        isShuttingDown: false,
-      };
+      });
 
       const { lastFrame } = render(
         <TUIApp
@@ -218,10 +231,10 @@ describe('TUI Integration Tests', () => {
       expect(output).toContain('stopped-session');
       expect(output).toContain('crashed-session');
 
-      // Verify status badges
-      expect(output).toContain('[running]');
-      expect(output).toContain('[stopped]');
-      expect(output).toContain('[crashed]');
+      // Verify Unicode status symbols
+      expect(output).toContain('\u25CF'); // filled circle (running)
+      expect(output).toContain('\u25CB'); // empty circle (stopped)
+      expect(output).toContain('\u25B2'); // triangle (crashed)
 
       // Verify selected session shows details
       expect(output).toContain('/tmp/running');
@@ -229,7 +242,7 @@ describe('TUI Integration Tests', () => {
     });
 
     it('should highlight attached session differently', () => {
-      const initialState: TUIState = {
+      const initialState = makeState({
         sessions: [
           {
             name: 'session-1',
@@ -237,6 +250,7 @@ describe('TUI Integration Tests', () => {
             state: SessionState.Running,
             startedAt: new Date(),
             workingDirectory: '/tmp/1',
+            promptCount: 0,
           },
           {
             name: 'session-2',
@@ -244,13 +258,12 @@ describe('TUI Integration Tests', () => {
             state: SessionState.Running,
             startedAt: new Date(),
             workingDirectory: '/tmp/2',
+            promptCount: 0,
           },
         ],
         selectedSessionName: 'session-2',
         attachedSessionName: 'session-2',
-        outputLines: [],
-        isShuttingDown: false,
-      };
+      });
 
       const { lastFrame } = render(
         <TUIApp
@@ -266,15 +279,13 @@ describe('TUI Integration Tests', () => {
       expect(output).toContain('session-1');
       expect(output).toContain('session-2');
 
-      // Note: ink-testing-library renders color as ANSI codes,
-      // so we verify the presence of both sessions. The actual color
-      // highlighting happens via Ink's color prop, which we test
-      // in unit tests.
+      // Verify attached session details shown
       expect(output).toContain('/tmp/2');
+      expect(output).toContain('ATTACHED');
     });
 
     it('should display session details only for selected session', () => {
-      const initialState: TUIState = {
+      const initialState = makeState({
         sessions: [
           {
             name: 'session-a',
@@ -282,6 +293,7 @@ describe('TUI Integration Tests', () => {
             state: SessionState.Running,
             startedAt: new Date(),
             workingDirectory: '/path/to/a',
+            promptCount: 0,
           },
           {
             name: 'session-b',
@@ -289,13 +301,11 @@ describe('TUI Integration Tests', () => {
             state: SessionState.Running,
             startedAt: new Date(),
             workingDirectory: '/path/to/b',
+            promptCount: 0,
           },
         ],
         selectedSessionName: 'session-a',
-        attachedSessionName: null,
-        outputLines: [],
-        isShuttingDown: false,
-      };
+      });
 
       const { lastFrame } = render(
         <TUIApp
@@ -317,7 +327,7 @@ describe('TUI Integration Tests', () => {
     });
 
     it('should display exit code for crashed sessions', () => {
-      const initialState: TUIState = {
+      const initialState = makeState({
         sessions: [
           {
             name: 'crashed-session',
@@ -326,13 +336,11 @@ describe('TUI Integration Tests', () => {
             startedAt: new Date(),
             workingDirectory: '/tmp/crashed',
             exitCode: 137,
+            promptCount: 0,
           },
         ],
         selectedSessionName: 'crashed-session',
-        attachedSessionName: null,
-        outputLines: [],
-        isShuttingDown: false,
-      };
+      });
 
       const { lastFrame } = render(
         <TUIApp
@@ -345,14 +353,14 @@ describe('TUI Integration Tests', () => {
       const output = lastFrame() || '';
 
       // Verify crash details are displayed
-      expect(output).toContain('[crashed]');
+      expect(output).toContain('\u25B2'); // crashed triangle
       expect(output).toContain('Exit code: 137');
     });
   });
 
   describe('Keyboard Navigation', () => {
     it('should register input handler on mount', () => {
-      const initialState: TUIState = {
+      const initialState = makeState({
         sessions: [
           {
             name: 'session-1',
@@ -360,16 +368,13 @@ describe('TUI Integration Tests', () => {
             state: SessionState.Running,
             startedAt: new Date(),
             workingDirectory: '/tmp/1',
+            promptCount: 0,
           },
         ],
         selectedSessionName: 'session-1',
-        attachedSessionName: null,
-        outputLines: [],
-        isShuttingDown: false,
-      };
+      });
 
       // Just verify the component renders without crashing
-      // Actual keyboard navigation logic is tested in keybindings.test.ts
       const { lastFrame } = render(
         <TUIApp
           initialState={initialState}
@@ -380,18 +385,12 @@ describe('TUI Integration Tests', () => {
 
       const output = lastFrame() || '';
       expect(output).toContain('session-1');
-      expect(output).toContain('[Tab]');
-      expect(output).toContain('[Enter]');
+      expect(output).toContain('Tab');
+      expect(output).toContain('Enter');
     });
 
     it('should display keyboard shortcuts in status bar', () => {
-      const initialState: TUIState = {
-        sessions: [],
-        selectedSessionName: null,
-        attachedSessionName: null,
-        outputLines: [],
-        isShuttingDown: false,
-      };
+      const initialState = makeState();
 
       const { lastFrame } = render(
         <TUIApp
@@ -403,19 +402,16 @@ describe('TUI Integration Tests', () => {
 
       const output = lastFrame() || '';
 
-      // Verify all navigation shortcuts are visible
-      expect(output).toContain('[Tab]');
-      expect(output).toContain('switch');
-      expect(output).toContain('[Enter]');
+      // Verify navigation shortcuts are visible (redesigned format)
+      expect(output).toContain('Tab');
+      expect(output).toContain('next');
+      expect(output).toContain('Enter');
       expect(output).toContain('attach');
-      expect(output).toContain('[q]');
-      expect(output).toContain('quit');
-      expect(output).toContain('[?]');
       expect(output).toContain('help');
     });
 
     it('should call onStateChange when state updates', () => {
-      const initialState: TUIState = {
+      const initialState = makeState({
         sessions: [
           {
             name: 'session-1',
@@ -423,13 +419,11 @@ describe('TUI Integration Tests', () => {
             state: SessionState.Running,
             startedAt: new Date(),
             workingDirectory: '/tmp/1',
+            promptCount: 0,
           },
         ],
         selectedSessionName: 'session-1',
-        attachedSessionName: null,
-        outputLines: [],
-        isShuttingDown: false,
-      };
+      });
 
       render(
         <TUIApp
@@ -446,7 +440,7 @@ describe('TUI Integration Tests', () => {
 
   describe('Status Bar Information', () => {
     it('should display correct session count', () => {
-      const initialState: TUIState = {
+      const initialState = makeState({
         sessions: [
           {
             name: 'session-1',
@@ -454,6 +448,7 @@ describe('TUI Integration Tests', () => {
             state: SessionState.Running,
             startedAt: new Date(),
             workingDirectory: '/tmp/1',
+            promptCount: 0,
           },
           {
             name: 'session-2',
@@ -461,6 +456,7 @@ describe('TUI Integration Tests', () => {
             state: SessionState.Running,
             startedAt: new Date(),
             workingDirectory: '/tmp/2',
+            promptCount: 0,
           },
           {
             name: 'session-3',
@@ -468,13 +464,11 @@ describe('TUI Integration Tests', () => {
             state: SessionState.Stopped,
             startedAt: new Date(),
             workingDirectory: '/tmp/3',
+            promptCount: 0,
           },
         ],
         selectedSessionName: 'session-1',
-        attachedSessionName: null,
-        outputLines: [],
-        isShuttingDown: false,
-      };
+      });
 
       const { lastFrame } = render(
         <TUIApp
@@ -487,17 +481,11 @@ describe('TUI Integration Tests', () => {
       const output = lastFrame() || '';
 
       // Verify session count in status bar
-      expect(output).toContain('3 sessions (2 running)');
+      expect(output).toContain('3 sessions');
     });
 
     it('should display all keyboard shortcuts', () => {
-      const initialState: TUIState = {
-        sessions: [],
-        selectedSessionName: null,
-        attachedSessionName: null,
-        outputLines: [],
-        isShuttingDown: false,
-      };
+      const initialState = makeState();
 
       const { lastFrame } = render(
         <TUIApp
@@ -509,19 +497,16 @@ describe('TUI Integration Tests', () => {
 
       const output = lastFrame() || '';
 
-      // Verify all keyboard shortcuts are displayed
-      expect(output).toContain('[Tab]');
-      expect(output).toContain('switch');
-      expect(output).toContain('[Enter]');
+      // Verify keyboard shortcuts are displayed (redesigned format)
+      expect(output).toContain('Tab');
+      expect(output).toContain('next');
+      expect(output).toContain('Enter');
       expect(output).toContain('attach');
-      expect(output).toContain('[q]');
-      expect(output).toContain('quit');
-      expect(output).toContain('[?]');
       expect(output).toContain('help');
     });
 
     it('should update session count when navigating', () => {
-      const initialState: TUIState = {
+      const initialState = makeState({
         sessions: [
           {
             name: 'session-1',
@@ -529,13 +514,11 @@ describe('TUI Integration Tests', () => {
             state: SessionState.Running,
             startedAt: new Date(),
             workingDirectory: '/tmp/1',
+            promptCount: 0,
           },
         ],
         selectedSessionName: 'session-1',
-        attachedSessionName: null,
-        outputLines: [],
-        isShuttingDown: false,
-      };
+      });
 
       const { lastFrame } = render(
         <TUIApp
@@ -548,7 +531,7 @@ describe('TUI Integration Tests', () => {
       const output = lastFrame() || '';
 
       // Verify header session count
-      expect(output).toContain('[1 session]');
+      expect(output).toContain('1 session');
 
       // Verify status bar shows singular "session"
       expect(output).toContain('1 session');
@@ -557,7 +540,7 @@ describe('TUI Integration Tests', () => {
 
   describe('Output Pane Integration', () => {
     it('should display output lines from selected session', () => {
-      const initialState: TUIState = {
+      const initialState = makeState({
         sessions: [
           {
             name: 'test-session',
@@ -565,13 +548,12 @@ describe('TUI Integration Tests', () => {
             state: SessionState.Running,
             startedAt: new Date(),
             workingDirectory: '/tmp/test',
+            promptCount: 0,
           },
         ],
         selectedSessionName: 'test-session',
-        attachedSessionName: null,
-        outputLines: ['Line 1', 'Line 2', 'Line 3'],
-        isShuttingDown: false,
-      };
+        outputLines: makeOutputLines(['Line 1', 'Line 2', 'Line 3'], 'test-session'),
+      });
 
       const { lastFrame } = render(
         <TUIApp
@@ -583,8 +565,9 @@ describe('TUI Integration Tests', () => {
 
       const output = lastFrame() || '';
 
-      // Verify output pane header
-      expect(output).toContain('> test-session');
+      // Verify output pane header (redesigned format)
+      expect(output).toContain('Output:');
+      expect(output).toContain('test-session');
 
       // Verify output lines are displayed
       expect(output).toContain('Line 1');
@@ -593,7 +576,7 @@ describe('TUI Integration Tests', () => {
     });
 
     it('should show empty state when no output', () => {
-      const initialState: TUIState = {
+      const initialState = makeState({
         sessions: [
           {
             name: 'empty-session',
@@ -601,13 +584,12 @@ describe('TUI Integration Tests', () => {
             state: SessionState.Running,
             startedAt: new Date(),
             workingDirectory: '/tmp/empty',
+            promptCount: 0,
           },
         ],
         selectedSessionName: 'empty-session',
-        attachedSessionName: null,
         outputLines: [],
-        isShuttingDown: false,
-      };
+      });
 
       const { lastFrame } = render(
         <TUIApp
@@ -619,12 +601,13 @@ describe('TUI Integration Tests', () => {
 
       const output = lastFrame() || '';
 
-      // Verify empty output message
-      expect(output).toContain('No output yet...');
+      // Verify empty output message (redesigned)
+      expect(output).toContain('No output yet');
+      expect(output).toContain('Press Enter to attach and send prompts');
     });
 
     it('should display output for selected session', () => {
-      const initialState: TUIState = {
+      const initialState = makeState({
         sessions: [
           {
             name: 'session-1',
@@ -632,6 +615,7 @@ describe('TUI Integration Tests', () => {
             state: SessionState.Running,
             startedAt: new Date(),
             workingDirectory: '/tmp/1',
+            promptCount: 0,
           },
           {
             name: 'session-2',
@@ -639,13 +623,12 @@ describe('TUI Integration Tests', () => {
             state: SessionState.Running,
             startedAt: new Date(),
             workingDirectory: '/tmp/2',
+            promptCount: 0,
           },
         ],
         selectedSessionName: 'session-1',
-        attachedSessionName: null,
-        outputLines: ['Output from session-1'],
-        isShuttingDown: false,
-      };
+        outputLines: makeOutputLines(['Output from session-1'], 'session-1'),
+      });
 
       const { lastFrame } = render(
         <TUIApp
@@ -657,12 +640,13 @@ describe('TUI Integration Tests', () => {
 
       // Verify initial output
       const output = lastFrame() || '';
-      expect(output).toContain('> session-1');
+      expect(output).toContain('Output:');
+      expect(output).toContain('session-1');
       expect(output).toContain('Output from session-1');
     });
 
-    it('should display activity indicator for running sessions', () => {
-      const initialState: TUIState = {
+    it('should display status symbol for running sessions', () => {
+      const initialState = makeState({
         sessions: [
           {
             name: 'active-session',
@@ -670,13 +654,12 @@ describe('TUI Integration Tests', () => {
             state: SessionState.Running,
             startedAt: new Date(),
             workingDirectory: '/tmp/active',
+            promptCount: 0,
           },
         ],
         selectedSessionName: 'active-session',
-        attachedSessionName: null,
         outputLines: [],
-        isShuttingDown: false,
-      };
+      });
 
       const { lastFrame } = render(
         <TUIApp
@@ -688,13 +671,14 @@ describe('TUI Integration Tests', () => {
 
       const output = lastFrame() || '';
 
-      // Verify spinner/activity indicator is present for running session
-      expect(output).toContain('> active-session');
-      expect(output).toContain('⏹');
+      // Verify header with status symbol and label (redesigned)
+      expect(output).toContain('active-session');
+      expect(output).toContain('\u25CF'); // filled circle
+      expect(output).toContain('running');
     });
 
     it('should not display activity indicator for stopped sessions', () => {
-      const initialState: TUIState = {
+      const initialState = makeState({
         sessions: [
           {
             name: 'stopped-session',
@@ -702,13 +686,12 @@ describe('TUI Integration Tests', () => {
             state: SessionState.Stopped,
             startedAt: new Date(),
             workingDirectory: '/tmp/stopped',
+            promptCount: 0,
           },
         ],
         selectedSessionName: 'stopped-session',
-        attachedSessionName: null,
         outputLines: [],
-        isShuttingDown: false,
-      };
+      });
 
       const { lastFrame } = render(
         <TUIApp
@@ -720,21 +703,16 @@ describe('TUI Integration Tests', () => {
 
       const output = lastFrame() || '';
 
-      // Verify no spinner for stopped session
-      expect(output).toContain('> stopped-session');
-      expect(output).not.toContain('⏹');
+      // Verify stopped status (empty circle, not filled)
+      expect(output).toContain('stopped-session');
+      expect(output).toContain('stopped');
+      expect(output).not.toContain('\u23F9'); // no stop symbol
     });
   });
 
   describe('Quit Functionality', () => {
     it('should exit when pressing q key', () => {
-      const initialState: TUIState = {
-        sessions: [],
-        selectedSessionName: null,
-        attachedSessionName: null,
-        outputLines: [],
-        isShuttingDown: false,
-      };
+      const initialState = makeState();
 
       const { stdin } = render(
         <TUIApp
@@ -752,13 +730,7 @@ describe('TUI Integration Tests', () => {
     });
 
     it('should exit when pressing Ctrl+C', () => {
-      const initialState: TUIState = {
-        sessions: [],
-        selectedSessionName: null,
-        attachedSessionName: null,
-        outputLines: [],
-        isShuttingDown: false,
-      };
+      const initialState = makeState();
 
       const { stdin } = render(
         <TUIApp
@@ -780,13 +752,7 @@ describe('TUI Integration Tests', () => {
       process.stdout.columns = 70;
       process.stdout.rows = 15;
 
-      const initialState: TUIState = {
-        sessions: [],
-        selectedSessionName: null,
-        attachedSessionName: null,
-        outputLines: [],
-        isShuttingDown: false,
-      };
+      const initialState = makeState();
 
       const { stdin } = render(
         <TUIApp
@@ -806,7 +772,7 @@ describe('TUI Integration Tests', () => {
 
   describe('Full TUI Workflows', () => {
     it('should render complete UI with multiple sessions', () => {
-      const initialState: TUIState = {
+      const initialState = makeState({
         sessions: [
           {
             name: 'session-1',
@@ -814,6 +780,7 @@ describe('TUI Integration Tests', () => {
             state: SessionState.Running,
             startedAt: new Date(),
             workingDirectory: '/tmp/1',
+            promptCount: 0,
           },
           {
             name: 'session-2',
@@ -821,6 +788,7 @@ describe('TUI Integration Tests', () => {
             state: SessionState.Running,
             startedAt: new Date(),
             workingDirectory: '/tmp/2',
+            promptCount: 0,
           },
           {
             name: 'session-3',
@@ -828,13 +796,11 @@ describe('TUI Integration Tests', () => {
             state: SessionState.Running,
             startedAt: new Date(),
             workingDirectory: '/tmp/3',
+            promptCount: 0,
           },
         ],
         selectedSessionName: 'session-1',
-        attachedSessionName: null,
-        outputLines: [],
-        isShuttingDown: false,
-      };
+      });
 
       const { lastFrame } = render(
         <TUIApp
@@ -848,17 +814,16 @@ describe('TUI Integration Tests', () => {
 
       // Verify all major UI sections are present
       expect(output).toContain('AgentSpawn');
-      expect(output).toContain('[3 sessions]');
+      expect(output).toContain('3 sessions');
       expect(output).toContain('session-1');
       expect(output).toContain('session-2');
       expect(output).toContain('session-3');
-      expect(output).toContain('[Tab]');
-      expect(output).toContain('[Enter]');
-      expect(output).toContain('[q]');
+      expect(output).toContain('Tab');
+      expect(output).toContain('Enter');
     });
 
     it('should integrate SessionListPane, OutputPane, and StatusBar', () => {
-      const initialState: TUIState = {
+      const initialState = makeState({
         sessions: [
           {
             name: 'target-session',
@@ -866,6 +831,7 @@ describe('TUI Integration Tests', () => {
             state: SessionState.Running,
             startedAt: new Date(),
             workingDirectory: '/tmp/target',
+            promptCount: 0,
           },
           {
             name: 'other-session',
@@ -873,13 +839,13 @@ describe('TUI Integration Tests', () => {
             state: SessionState.Stopped,
             startedAt: new Date(),
             workingDirectory: '/tmp/other',
+            promptCount: 0,
           },
         ],
         selectedSessionName: 'target-session',
         attachedSessionName: 'target-session',
-        outputLines: ['Test output line 1', 'Test output line 2'],
-        isShuttingDown: false,
-      };
+        outputLines: makeOutputLines(['Test output line 1', 'Test output line 2'], 'target-session'),
+      });
 
       const { lastFrame } = render(
         <TUIApp
@@ -894,27 +860,21 @@ describe('TUI Integration Tests', () => {
       // Verify SessionListPane integration
       expect(output).toContain('Sessions');
       expect(output).toContain('target-session');
-      expect(output).toContain('[running]');
+      expect(output).toContain('\u25CF'); // running symbol
       expect(output).toContain('other-session');
-      expect(output).toContain('[stopped]');
+      expect(output).toContain('\u25CB'); // stopped symbol
 
-      // Verify OutputPane integration
-      expect(output).toContain('> target-session');
+      // Verify OutputPane integration (redesigned header)
+      expect(output).toContain('Output:');
       expect(output).toContain('Test output line 1');
       expect(output).toContain('Test output line 2');
 
       // Verify StatusBar integration
-      expect(output).toContain('2 sessions (1 running)');
+      expect(output).toContain('2 sessions');
     });
 
     it('should handle navigation with no sessions gracefully', () => {
-      const initialState: TUIState = {
-        sessions: [],
-        selectedSessionName: null,
-        attachedSessionName: null,
-        outputLines: [],
-        isShuttingDown: false,
-      };
+      const initialState = makeState();
 
       const { lastFrame } = render(
         <TUIApp
@@ -928,8 +888,8 @@ describe('TUI Integration Tests', () => {
 
       // Verify empty state is handled
       expect(output).toContain('No sessions');
-      expect(output).toContain('[0 sessions]');
-      expect(output).toContain('No session attached');
+      expect(output).toContain('0 sessions');
+      expect(output).toContain('Select a session to view output');
     });
   });
 });

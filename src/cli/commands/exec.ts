@@ -24,13 +24,13 @@ export function registerExecCommand(
         process.exitCode = 1;
         return;
       }
-      const handle = session.getHandle();
-      if (!handle) {
-        console.error(`Error: Session '${name}' has no active process.`);
+      try {
+        console.log(`Sending to [${name}]: ${command}`);
+        const response = await session.sendPrompt(command);
+        console.log(response);
+      } catch (err) {
+        console.error(`Error: ${err instanceof Error ? err.message : err}`);
         process.exitCode = 1;
-        return;
       }
-      handle.stdin.write(command + '\n');
-      console.log(`Sent to [${name}]: ${command}`);
     });
 }

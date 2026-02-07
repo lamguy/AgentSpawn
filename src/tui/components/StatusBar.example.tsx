@@ -13,7 +13,6 @@ import { SessionState } from '../../types.js';
  * Example TUI layout with StatusBar at the bottom.
  */
 export function ExampleLayout(): React.ReactElement {
-  // Example state
   const state: TUIState = {
     sessions: [
       {
@@ -22,6 +21,7 @@ export function ExampleLayout(): React.ReactElement {
         state: SessionState.Running,
         startedAt: new Date(),
         workingDirectory: '/home/user/project-a',
+        promptCount: 5,
       },
       {
         name: 'project-b',
@@ -29,6 +29,7 @@ export function ExampleLayout(): React.ReactElement {
         state: SessionState.Running,
         startedAt: new Date(),
         workingDirectory: '/home/user/project-b',
+        promptCount: 2,
       },
       {
         name: 'project-c',
@@ -36,6 +37,7 @@ export function ExampleLayout(): React.ReactElement {
         state: SessionState.Stopped,
         startedAt: new Date(),
         workingDirectory: '/home/user/project-c',
+        promptCount: 0,
       },
     ],
     selectedSessionName: 'project-a',
@@ -43,6 +45,9 @@ export function ExampleLayout(): React.ReactElement {
     outputLines: [],
     isShuttingDown: false,
     mode: 'navigation',
+    isProcessing: false,
+    overlayStack: [],
+    statusMessage: null,
   };
 
   return (
@@ -53,15 +58,15 @@ export function ExampleLayout(): React.ReactElement {
       </Box>
 
       {/* StatusBar at the bottom */}
-      <StatusBar state={state} version="v0.1.0" model="opus" cost="$0.12" />
+      <StatusBar state={state} version="v0.1.0" />
     </Box>
   );
 }
 
 /**
- * Example: StatusBar with minimal info (no details).
+ * Example: StatusBar with help overlay active.
  */
-export function MinimalStatusBar(): React.ReactElement {
+export function HelpModeStatusBar(): React.ReactElement {
   const state: TUIState = {
     sessions: [],
     selectedSessionName: null,
@@ -69,15 +74,18 @@ export function MinimalStatusBar(): React.ReactElement {
     outputLines: [],
     isShuttingDown: false,
     mode: 'navigation',
+    isProcessing: false,
+    overlayStack: [{ kind: 'help', scrollOffset: 0 }],
+    statusMessage: null,
   };
 
-  return <StatusBar state={state} showDetails={false} />;
+  return <StatusBar state={state} />;
 }
 
 /**
- * Example: StatusBar with all optional props.
+ * Example: StatusBar with a success status message.
  */
-export function FullStatusBar(): React.ReactElement {
+export function StatusMessageBar(): React.ReactElement {
   const state: TUIState = {
     sessions: [
       {
@@ -86,6 +94,7 @@ export function FullStatusBar(): React.ReactElement {
         state: SessionState.Running,
         startedAt: new Date(),
         workingDirectory: '/tmp',
+        promptCount: 0,
       },
     ],
     selectedSessionName: 'example',
@@ -93,15 +102,14 @@ export function FullStatusBar(): React.ReactElement {
     outputLines: [],
     isShuttingDown: false,
     mode: 'navigation',
+    isProcessing: false,
+    overlayStack: [],
+    statusMessage: {
+      text: 'Session "example" started successfully',
+      level: 'success',
+      expiresAt: Date.now() + 5000,
+    },
   };
 
-  return (
-    <StatusBar
-      state={state}
-      version="v0.1.0"
-      model="claude-opus-4-6"
-      cost="$1.23"
-      showDetails={true}
-    />
-  );
+  return <StatusBar state={state} version="v0.1.0" />;
 }

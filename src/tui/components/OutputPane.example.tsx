@@ -77,6 +77,7 @@ export function StandaloneOutputPaneExample(): React.ReactElement {
     state: SessionState.Running,
     startedAt: new Date(),
     workingDirectory: '/home/user/project',
+    promptCount: 3,
   };
 
   const mockOutputLines = [
