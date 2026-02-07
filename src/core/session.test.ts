@@ -18,6 +18,12 @@ interface MockChildProcess extends EventEmitter {
   kill: ReturnType<typeof vi.fn>;
 }
 
+/** Create a stream-json assistant event buffer for mock stdout */
+function assistantEvent(text: string): Buffer {
+  const event = { type: 'assistant', message: { content: [{ type: 'text', text }] } };
+  return Buffer.from(JSON.stringify(event) + '\n');
+}
+
 function createMockChild(pid: number = 12345): MockChildProcess {
   const child = new EventEmitter() as MockChildProcess;
   child.pid = pid;
@@ -101,7 +107,7 @@ describe('Session', () => {
     expect(args).toContain('--resume');
     expect(args).not.toContain('--session-id');
 
-    mockChild.stdout.emit('data', Buffer.from('response'));
+    mockChild.stdout.emit('data', assistantEvent('response'));
     mockChild.emit('close', 0);
     await p;
   });
@@ -127,7 +133,7 @@ describe('Session', () => {
     // Verify spawn was called with --session-id
     expect(mockedSpawn).toHaveBeenCalledWith(
       'claude',
-      expect.arrayContaining(['--print', '--output-format', 'text', '--session-id']),
+      expect.arrayContaining(['--print', '--output-format', 'stream-json', '--verbose', '--session-id']),
       expect.objectContaining({
         cwd: '/tmp/test',
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -144,8 +150,8 @@ describe('Session', () => {
     expect(mockChild.stdin.write).toHaveBeenCalledWith('hello');
     expect(mockChild.stdin.end).toHaveBeenCalled();
 
-    // Simulate response
-    mockChild.stdout.emit('data', Buffer.from('world'));
+    // Simulate response (stream-json format)
+    mockChild.stdout.emit('data', assistantEvent('world'));
     mockChild.emit('close', 0);
 
     const result = await promptPromise;
@@ -162,7 +168,7 @@ describe('Session', () => {
 
     // First prompt
     const p1 = session.sendPrompt('first');
-    mockChild1.stdout.emit('data', Buffer.from('response1'));
+    mockChild1.stdout.emit('data', assistantEvent('response1'));
     mockChild1.emit('close', 0);
     await p1;
 
@@ -176,7 +182,7 @@ describe('Session', () => {
     const resumeIndex = args.indexOf('--resume');
     expect(args[resumeIndex + 1]).toBe(session.getSessionId());
 
-    mockChild2.stdout.emit('data', Buffer.from('response2'));
+    mockChild2.stdout.emit('data', assistantEvent('response2'));
     mockChild2.emit('close', 0);
 
     const result = await p2;
@@ -197,8 +203,8 @@ describe('Session', () => {
 
     const p = session.sendPrompt('test');
 
-    mockChild.stdout.emit('data', Buffer.from('chunk1'));
-    mockChild.stdout.emit('data', Buffer.from('chunk2'));
+    mockChild.stdout.emit('data', assistantEvent('chunk1'));
+    mockChild.stdout.emit('data', assistantEvent('chunk2'));
     mockChild.emit('close', 0);
 
     await p;
@@ -270,8 +276,8 @@ describe('Session', () => {
 
     const p = session.sendPrompt('hello');
 
-    mockChild.stdout.emit('data', Buffer.from('Hello'));
-    mockChild.stdout.emit('data', Buffer.from(' World'));
+    mockChild.stdout.emit('data', assistantEvent('Hello'));
+    mockChild.stdout.emit('data', assistantEvent(' World'));
     mockChild.emit('close', 0);
 
     const result = await p;
@@ -344,7 +350,7 @@ describe('Session', () => {
     const p = session.sendPrompt('hello');
 
     mockChild.stderr.emit('data', Buffer.from('warning'));
-    mockChild.stdout.emit('data', Buffer.from('ok'));
+    mockChild.stdout.emit('data', assistantEvent('ok'));
     mockChild.emit('close', 0);
 
     await p;

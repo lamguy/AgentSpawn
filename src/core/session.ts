@@ -59,7 +59,7 @@ export class Session extends EventEmitter {
 
     return new Promise<string>((resolve, reject) => {
       // Build args: first prompt uses --session-id, subsequent use --resume
-      const args = ['--print', '--output-format', 'text'];
+      const args = ['--print', '--output-format', 'stream-json', '--verbose'];
       if (this.promptCount === 0) {
         args.push('--session-id', this.claudeSessionId);
       } else {
@@ -80,11 +80,32 @@ export class Session extends EventEmitter {
       this.pid = child.pid ?? this.pid;
 
       let response = '';
+      let jsonBuffer = '';
 
       child.stdout?.on('data', (chunk: Buffer) => {
-        const text = chunk.toString();
-        response += text;
-        this.emit('data', text);
+        jsonBuffer += chunk.toString();
+
+        // Process complete JSON lines (newline-delimited)
+        const lines = jsonBuffer.split('\n');
+        jsonBuffer = lines.pop() ?? ''; // Keep incomplete line in buffer
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+
+          try {
+            const event = JSON.parse(trimmed);
+            const text = this.extractText(event);
+            if (text) {
+              response += text;
+              this.emit('data', text);
+            }
+          } catch {
+            // Non-JSON output — emit as-is
+            response += trimmed;
+            this.emit('data', trimmed);
+          }
+        }
       });
 
       child.stderr?.on('data', (chunk: Buffer) => {
@@ -99,6 +120,20 @@ export class Session extends EventEmitter {
       });
 
       child.on('close', (code: number | null) => {
+        // Process any remaining buffered JSON
+        if (jsonBuffer.trim()) {
+          try {
+            const event = JSON.parse(jsonBuffer.trim());
+            const text = this.extractText(event);
+            if (text) {
+              response += text;
+              this.emit('data', text);
+            }
+          } catch {
+            // Ignore
+          }
+        }
+
         this.activeProcess = null;
         this.promptCount++;
 
@@ -116,6 +151,47 @@ export class Session extends EventEmitter {
       child.stdin?.write(prompt);
       child.stdin?.end();
     });
+  }
+
+  /**
+   * Extract displayable text from a stream-json event.
+   *
+   * Stream-json events include:
+   * - { type: "assistant", message: { content: [{ type: "text", text: "..." }] } }
+   * - { type: "content_block_delta", delta: { type: "text_delta", text: "..." } }
+   * - { type: "result", result: "..." }
+   * - { type: "system" } — init metadata, ignored
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private extractText(event: any): string | null {
+    if (!event || !event.type) return null;
+
+    switch (event.type) {
+      case 'assistant': {
+        // Full assistant message — extract text content blocks
+        const content = event.message?.content;
+        if (Array.isArray(content)) {
+          const texts = content
+            .filter((c: { type: string }) => c.type === 'text')
+            .map((c: { text: string }) => c.text);
+          return texts.length > 0 ? texts.join('') : null;
+        }
+        return null;
+      }
+      case 'content_block_delta': {
+        // Streaming text delta
+        if (event.delta?.type === 'text_delta') {
+          return event.delta.text ?? null;
+        }
+        return null;
+      }
+      case 'result': {
+        // Final result — only use if we haven't already captured content
+        return null; // Content already captured via assistant/delta events
+      }
+      default:
+        return null;
+    }
   }
 
   /**
