@@ -15,7 +15,7 @@ export function registerStartCommand(
     .command('start <name>')
     .description('Start a new agent session')
     .option('-d, --dir <path>', 'Working directory', process.cwd())
-    .option('--permission-mode <mode>', 'Permission mode for Claude (acceptEdits, bypassPermissions, default, plan, delegate, dontAsk)', 'acceptEdits')
+    .option('--permission-mode <mode>', 'Permission mode for Claude (bypassPermissions, acceptEdits, default, plan, delegate, dontAsk)', 'bypassPermissions')
     .action(async (name: string, options: { dir: string; permissionMode: string }) => {
       try {
         const workingDirectory = path.resolve(options.dir);

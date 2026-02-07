@@ -177,7 +177,7 @@ export function SessionCreationDialog({
 
             <Box marginTop={1}>
               {/* Permission Mode field */}
-              {renderField('Permission Mode', 'permissionMode', 'acceptEdits')}
+              {renderField('Permission Mode', 'permissionMode', 'bypassPermissions')}
             </Box>
           </Box>
         )}
@@ -185,7 +185,7 @@ export function SessionCreationDialog({
         {/* Footer hints */}
         <Box flexDirection="column" marginTop={1}>
           <Text dimColor>Tab to switch fields</Text>
-          <Text dimColor>Modes: acceptEdits, bypassPermissions, default</Text>
+          <Text dimColor>Modes: bypassPermissions, acceptEdits, default</Text>
           <Text dimColor>Enter to create, Esc cancel</Text>
         </Box>
       </Box>

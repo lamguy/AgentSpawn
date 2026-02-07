@@ -478,7 +478,7 @@ describe('handleSessionCreationKeypress', () => {
     const state = createMockState(['existing']);
     const overlay: SessionCreationOverlayState = {
       kind: 'session-creation',
-      fields: { name: '', directory: '.', permissionMode: 'acceptEdits' },
+      fields: { name: '', directory: '.', permissionMode: 'bypassPermissions' },
       activeField: 'name',
       errors: { name: '', directory: '', permissionMode: '' },
       isSubmitting: false,

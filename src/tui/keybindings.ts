@@ -162,7 +162,7 @@ export function handleNavigationKeypress(
       return stateResult(
         pushOverlay(state, {
           kind: 'session-creation',
-          fields: { name: '', directory: '.', permissionMode: 'acceptEdits' },
+          fields: { name: '', directory: '.', permissionMode: 'bypassPermissions' },
           activeField: 'name',
           errors: { name: '', directory: '', permissionMode: '' },
           isSubmitting: false,
@@ -312,7 +312,7 @@ function executeMenuItem(
       return stateResult(
         pushOverlay(popped, {
           kind: 'session-creation',
-          fields: { name: '', directory: '.', permissionMode: 'acceptEdits' },
+          fields: { name: '', directory: '.', permissionMode: 'bypassPermissions' },
           activeField: 'name',
           errors: { name: '', directory: '', permissionMode: '' },
           isSubmitting: false,

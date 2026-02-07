@@ -196,7 +196,7 @@ export class TUI {
       const session = await this.manager.startSession({
         name,
         workingDirectory: directory || process.cwd(),
-        permissionMode: permissionMode || 'acceptEdits',
+        permissionMode: permissionMode || 'bypassPermissions',
       });
       this.outputCapture.captureSession(name, session);
 
@@ -252,7 +252,7 @@ export class TUI {
       // Get session info before stopping
       const info = this.manager.getSession(sessionName)?.getInfo();
       const workingDirectory = info?.workingDirectory ?? process.cwd();
-      const permissionMode = info?.permissionMode ?? 'acceptEdits';
+      const permissionMode = info?.permissionMode ?? 'bypassPermissions';
 
       await this.manager.stopSession(sessionName);
 
