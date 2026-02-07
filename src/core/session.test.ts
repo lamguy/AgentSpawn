@@ -79,6 +79,33 @@ describe('Session', () => {
     expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
   });
 
+  it('constructor accepts optional claudeSessionId', () => {
+    const knownUUID = '12345678-1234-1234-1234-123456789abc';
+    const sessionWithId = new Session(config, 5000, knownUUID);
+    expect(sessionWithId.getSessionId()).toBe(knownUUID);
+  });
+
+  it('constructor accepts optional promptCount', async () => {
+    const mockChild = createMockChild(42);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    mockedSpawn.mockReturnValue(mockChild as any);
+
+    // Create session with promptCount: 5 (simulating 5 prior prompts)
+    const sessionWithCount = new Session(config, 5000, undefined, 5);
+    await sessionWithCount.start();
+
+    // First prompt should use --resume (not --session-id) because promptCount > 0
+    const p = sessionWithCount.sendPrompt('hello');
+
+    const args = mockedSpawn.mock.calls[0][1] as string[];
+    expect(args).toContain('--resume');
+    expect(args).not.toContain('--session-id');
+
+    mockChild.stdout.emit('data', Buffer.from('response'));
+    mockChild.emit('close', 0);
+    await p;
+  });
+
   it('isProcessing() returns false when idle', async () => {
     await session.start();
     expect(session.isProcessing()).toBe(false);
