@@ -57,9 +57,9 @@ describe('StatusBar', () => {
     const state = makeState({
       overlayStack: [{
         kind: 'session-creation',
-        fields: { name: '', directory: '.', permissionMode: 'acceptEdits' },
+        fields: { name: '', template: '', directory: '.', permissionMode: 'acceptEdits' },
         activeField: 'name',
-        errors: { name: '', directory: '', permissionMode: '' },
+        errors: { name: '', template: '', directory: '', permissionMode: '' },
         isSubmitting: false,
       }],
     });

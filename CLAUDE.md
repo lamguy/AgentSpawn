@@ -128,12 +128,13 @@ agentspawn stop --all               # Stop everything
 ```
 src/
   cli/              # Command definitions and argument parsing
-    commands/       # Individual command handlers (start, stop, list, exec, switch)
+    commands/       # Individual command handlers (start, stop, list, exec, switch, template)
     index.ts        # CLI entry point, command registration
   core/
     session.ts      # Session model — represents a single Claude Code instance
     manager.ts      # SessionManager — spawns, tracks, and destroys sessions
     registry.ts     # Persistent session registry (state file on disk)
+    template.ts     # TemplateManager — saved session configurations with file locking
   io/
     router.ts       # I/O multiplexer — routes stdin/stdout to active session
     formatter.ts    # Output formatting, session-prefixed lines
@@ -229,4 +230,5 @@ npm run lint         # Lint + format check
 | Registry    | On-disk JSON file tracking session metadata across CLI invocations|
 | Router      | The I/O multiplexer that connects terminal stdin/stdout to sessions|
 | Attached    | The currently active session receiving user input                 |
+| Template    | A saved session configuration (directory, permissions, env) that can be reused to quickly create new sessions |
 | History     | Per-session NDJSON log of prompts and response previews           |

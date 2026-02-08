@@ -164,9 +164,9 @@ export function handleNavigationKeypress(
       return stateResult(
         pushOverlay(state, {
           kind: 'session-creation',
-          fields: { name: '', directory: '.', permissionMode: 'bypassPermissions' },
+          fields: { name: '', template: '', directory: '.', permissionMode: 'bypassPermissions' },
           activeField: 'name',
-          errors: { name: '', directory: '', permissionMode: '' },
+          errors: { name: '', template: '', directory: '', permissionMode: '' },
           isSubmitting: false,
         }),
       );
@@ -327,9 +327,9 @@ function executeMenuItem(
       return stateResult(
         pushOverlay(popped, {
           kind: 'session-creation',
-          fields: { name: '', directory: '.', permissionMode: 'bypassPermissions' },
+          fields: { name: '', template: '', directory: '.', permissionMode: 'bypassPermissions' },
           activeField: 'name',
-          errors: { name: '', directory: '', permissionMode: '' },
+          errors: { name: '', template: '', directory: '', permissionMode: '' },
           isSubmitting: false,
         }),
       );
@@ -384,12 +384,11 @@ export function handleSessionCreationKeypress(
       return stateResult(popOverlay(state));
 
     case KEY_CODES.TAB: {
-      const nextField =
-        overlay.activeField === 'name'
-          ? 'directory'
-          : overlay.activeField === 'directory'
-            ? 'permissionMode'
-            : 'name';
+      const fieldOrder: SessionCreationOverlayState['activeField'][] = [
+        'name', 'template', 'directory', 'permissionMode',
+      ];
+      const currentIdx = fieldOrder.indexOf(overlay.activeField);
+      const nextField = fieldOrder[(currentIdx + 1) % fieldOrder.length];
       return stateResult(
         replaceTopOverlay(state, {
           ...overlay,
@@ -399,12 +398,11 @@ export function handleSessionCreationKeypress(
     }
 
     case KEY_CODES.SHIFT_TAB: {
-      const prevField =
-        overlay.activeField === 'name'
-          ? 'permissionMode'
-          : overlay.activeField === 'directory'
-            ? 'name'
-            : 'directory';
+      const fieldOrder: SessionCreationOverlayState['activeField'][] = [
+        'name', 'template', 'directory', 'permissionMode',
+      ];
+      const currentIdx = fieldOrder.indexOf(overlay.activeField);
+      const prevField = fieldOrder[(currentIdx - 1 + fieldOrder.length) % fieldOrder.length];
       return stateResult(
         replaceTopOverlay(state, {
           ...overlay,
@@ -415,7 +413,7 @@ export function handleSessionCreationKeypress(
 
     case KEY_CODES.ENTER: {
       // Validate
-      const errors = { name: '', directory: '', permissionMode: '' };
+      const errors = { name: '', template: '', directory: '', permissionMode: '' };
       const trimmedName = overlay.fields.name.trim();
 
       if (!trimmedName) {
@@ -437,11 +435,23 @@ export function handleSessionCreationKeypress(
         errors,
       });
       const popped = popOverlay(submitting);
+
+      const trimmedTemplate = overlay.fields.template.trim();
+      if (trimmedTemplate) {
+        return actionResult(popped, {
+          kind: 'create-session-from-template',
+          name: trimmedName,
+          templateName: trimmedTemplate,
+          directory: overlay.fields.directory || '.',
+          permissionMode: overlay.fields.permissionMode || 'bypassPermissions',
+        });
+      }
+
       return actionResult(popped, {
         kind: 'create-session',
         name: trimmedName,
         directory: overlay.fields.directory || '.',
-        permissionMode: overlay.fields.permissionMode || 'acceptEdits',
+        permissionMode: overlay.fields.permissionMode || 'bypassPermissions',
       });
     }
 

@@ -80,10 +80,30 @@ export interface PromptHistoryEntry {
   timestamp: string;
 }
 
+export interface TemplateEntry {
+  name: string;
+  workingDirectory?: string;
+  permissionMode?: string;
+  /**
+   * Reserved for future use. Stored in templates but not yet passed to
+   * SessionConfig or the Claude CLI. Will be wired up once Claude Code
+   * supports a --system-prompt flag or equivalent.
+   */
+  systemPrompt?: string;
+  env?: Record<string, string>;
+  createdAt: string;
+}
+
+export interface TemplateData {
+  version: number;
+  templates: Record<string, TemplateEntry>;
+}
+
 export interface AgentSpawnConfig {
   registryPath: string;
   workspacesPath?: string;
   historyDir?: string;
+  templatesPath?: string;
   logLevel: string;
   shutdownTimeoutMs: number;
 }

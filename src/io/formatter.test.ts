@@ -7,8 +7,9 @@ import {
   formatWorkspaceTable,
   formatSessionsSummary,
   formatRelativeDate,
+  formatTemplateTable,
 } from './formatter.js';
-import { SessionState, WorkspaceEntry } from '../types.js';
+import { SessionState, WorkspaceEntry, TemplateEntry } from '../types.js';
 
 describe('Formatter', () => {
   it('formatSessionOutput prefixes with session name', () => {
@@ -149,6 +150,89 @@ describe('formatSessionsSummary', () => {
   it('should truncate with "..." for many sessions', () => {
     const result = formatSessionsSummary(['s1', 's2', 's3', 's4', 's5', 's6']);
     expect(result).toBe('6 (s1, s2, s3, ...)');
+  });
+});
+
+describe('formatTemplateTable', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('should return "No templates." for empty array', () => {
+    expect(formatTemplateTable([])).toBe('No templates.');
+  });
+
+  it('should render correct columns (NAME, DIRECTORY, PERMISSION MODE, CREATED)', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-06-15T12:00:00Z'));
+
+    const templates: TemplateEntry[] = [
+      {
+        name: 'backend',
+        workingDirectory: '/projects/backend',
+        permissionMode: 'bypassPermissions',
+        createdAt: '2025-06-15T11:55:00Z',
+      },
+    ];
+
+    const result = formatTemplateTable(templates);
+    expect(result).toContain('NAME');
+    expect(result).toContain('DIRECTORY');
+    expect(result).toContain('PERMISSION MODE');
+    expect(result).toContain('CREATED');
+    expect(result).toContain('backend');
+    expect(result).toContain('/projects/backend');
+    expect(result).toContain('bypassPermissions');
+    expect(result).toContain('5m ago');
+  });
+
+  it('should display "--" for undefined workingDirectory and permissionMode', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-06-15T12:00:00Z'));
+
+    const templates: TemplateEntry[] = [
+      {
+        name: 'minimal',
+        createdAt: '2025-06-15T12:00:00Z',
+      },
+    ];
+
+    const result = formatTemplateTable(templates);
+    expect(result).toContain('minimal');
+    // The "--" placeholders should appear for missing directory and permission mode
+    const lines = result.split('\n');
+    // The data row (second line) should contain "--" twice
+    const dataLine = lines[1];
+    const dashMatches = dataLine.match(/--/g);
+    expect(dashMatches).not.toBeNull();
+    expect(dashMatches!.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('should render multiple templates as rows', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-06-15T12:00:00Z'));
+
+    const templates: TemplateEntry[] = [
+      {
+        name: 'alpha',
+        workingDirectory: '/alpha',
+        createdAt: '2025-06-15T12:00:00Z',
+      },
+      {
+        name: 'beta',
+        permissionMode: 'default',
+        createdAt: '2025-06-15T10:00:00Z',
+      },
+    ];
+
+    const result = formatTemplateTable(templates);
+    expect(result).toContain('alpha');
+    expect(result).toContain('beta');
+    expect(result).toContain('/alpha');
+    expect(result).toContain('default');
+    // Should have header + 2 data rows = 3 lines
+    const lines = result.split('\n');
+    expect(lines).toHaveLength(3);
   });
 });
 

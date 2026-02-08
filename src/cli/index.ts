@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { SessionManager } from '../core/manager.js';
 import { Router } from '../io/router.js';
 import { WorkspaceManager } from '../core/workspace.js';
+import { TemplateManager } from '../core/template.js';
 import { HistoryStore } from '../core/history.js';
 import { DEFAULT_CONFIG } from '../config/defaults.js';
 import { registerStartCommand } from './commands/start.js';
@@ -12,6 +13,7 @@ import { registerSwitchCommand } from './commands/switch.js';
 import { registerTUICommand } from './commands/tui.js';
 import { registerWorkspaceCommand } from './commands/workspace.js';
 import { registerHistoryCommand } from './commands/history.js';
+import { registerTemplateCommand } from './commands/template.js';
 
 export const program: Command = new Command()
   .name('agentspawn')
@@ -31,16 +33,21 @@ export async function run(argv: string[]): Promise<void> {
     DEFAULT_CONFIG.workspacesPath!,
   );
 
+  const templateManager = new TemplateManager(
+    DEFAULT_CONFIG.templatesPath!,
+  );
+
   await manager.init();
 
-  registerStartCommand(program, manager, router);
+  registerStartCommand(program, manager, router, templateManager);
   registerStopCommand(program, manager, router);
   registerListCommand(program, manager, router);
   registerExecCommand(program, manager, router);
   registerSwitchCommand(program, manager, router);
-  registerTUICommand(program, manager, router, historyStore);
+  registerTUICommand(program, manager, router, historyStore, templateManager);
   registerWorkspaceCommand(program, manager, router, workspaceManager);
   registerHistoryCommand(program, manager, historyStore);
+  registerTemplateCommand(program, templateManager);
 
   await program.parseAsync(argv);
 }

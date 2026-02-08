@@ -9,6 +9,7 @@ describe('validateConfig', () => {
       registryPath: '/custom/path.json',
       workspacesPath: '/custom/workspaces.json',
       historyDir: '/custom/history',
+      templatesPath: '/custom/templates.json',
       logLevel: 'debug',
       shutdownTimeoutMs: 10000,
     };
@@ -23,6 +24,7 @@ describe('validateConfig', () => {
       registryPath: '/my/registry.json',
       workspacesPath: DEFAULT_CONFIG.workspacesPath,
       historyDir: DEFAULT_CONFIG.historyDir,
+      templatesPath: DEFAULT_CONFIG.templatesPath,
       logLevel: DEFAULT_CONFIG.logLevel,
       shutdownTimeoutMs: DEFAULT_CONFIG.shutdownTimeoutMs,
     });

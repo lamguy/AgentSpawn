@@ -91,6 +91,37 @@ export class HistoryEntryNotFoundError extends AgentSpawnError {
   }
 }
 
+export class TemplateNotFoundError extends AgentSpawnError {
+  constructor(name: string) {
+    super(`Template not found: ${name}`, 'TEMPLATE_NOT_FOUND');
+    this.name = 'TemplateNotFoundError';
+  }
+}
+
+export class TemplateAlreadyExistsError extends AgentSpawnError {
+  constructor(name: string) {
+    super(`Template already exists: ${name}`, 'TEMPLATE_ALREADY_EXISTS');
+    this.name = 'TemplateAlreadyExistsError';
+  }
+}
+
+export class TemplateCorruptError extends AgentSpawnError {
+  constructor(path: string) {
+    super(`Template file is corrupt: ${path}`, 'TEMPLATE_CORRUPT');
+    this.name = 'TemplateCorruptError';
+  }
+}
+
+export class TemplateLockError extends AgentSpawnError {
+  constructor(path: string, cause?: Error) {
+    super(`Failed to acquire lock on template file: ${path}`, 'TEMPLATE_LOCK_FAILED');
+    this.name = 'TemplateLockError';
+    if (cause) {
+      this.cause = cause;
+    }
+  }
+}
+
 export class PromptTimeoutError extends AgentSpawnError {
   constructor(
     public readonly sessionName: string,

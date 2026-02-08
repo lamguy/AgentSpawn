@@ -481,9 +481,9 @@ describe('handleSessionCreationKeypress', () => {
     const state = createMockState(['existing']);
     const overlay: SessionCreationOverlayState = {
       kind: 'session-creation',
-      fields: { name: '', directory: '.', permissionMode: 'bypassPermissions' },
+      fields: { name: '', template: '', directory: '.', permissionMode: 'bypassPermissions' },
       activeField: 'name',
-      errors: { name: '', directory: '', permissionMode: '' },
+      errors: { name: '', template: '', directory: '', permissionMode: '' },
       isSubmitting: false,
     };
     state.overlayStack = [overlay];
@@ -505,34 +505,41 @@ describe('handleSessionCreationKeypress', () => {
     );
     expect(
       (s.overlayStack[0] as SessionCreationOverlayState).activeField,
-    ).toBe('directory');
+    ).toBe('template');
   });
 
-  it('should cycle through all three fields in session creation', () => {
+  it('should cycle through all four fields in session creation', () => {
     const { state, overlay } = creationState();
     // Start at name
     expect(overlay.activeField).toBe('name');
 
-    // Tab to directory
+    // Tab to template
     const s1 = expectState(
       handleSessionCreationKeypress(state, overlay, KEY_CODES.TAB),
     );
     const o1 = s1.overlayStack[0] as SessionCreationOverlayState;
-    expect(o1.activeField).toBe('directory');
+    expect(o1.activeField).toBe('template');
 
-    // Tab to permissionMode
+    // Tab to directory
     const s2 = expectState(
       handleSessionCreationKeypress(s1, o1, KEY_CODES.TAB),
     );
     const o2 = s2.overlayStack[0] as SessionCreationOverlayState;
-    expect(o2.activeField).toBe('permissionMode');
+    expect(o2.activeField).toBe('directory');
 
-    // Tab back to name
+    // Tab to permissionMode
     const s3 = expectState(
       handleSessionCreationKeypress(s2, o2, KEY_CODES.TAB),
     );
     const o3 = s3.overlayStack[0] as SessionCreationOverlayState;
-    expect(o3.activeField).toBe('name');
+    expect(o3.activeField).toBe('permissionMode');
+
+    // Tab back to name
+    const s4 = expectState(
+      handleSessionCreationKeypress(s3, o3, KEY_CODES.TAB),
+    );
+    const o4 = s4.overlayStack[0] as SessionCreationOverlayState;
+    expect(o4.activeField).toBe('name');
   });
 
   it('should switch fields back on Shift+Tab', () => {
@@ -611,7 +618,7 @@ describe('handleSessionCreationKeypress', () => {
     const { state, overlay: base } = creationState();
     const overlay = {
       ...base,
-      fields: { name: 'new-session', directory: '/tmp/project', permissionMode: 'bypassPermissions' },
+      fields: { name: 'new-session', template: '', directory: '/tmp/project', permissionMode: 'bypassPermissions' },
     };
     state.overlayStack = [overlay];
     const result = handleSessionCreationKeypress(
@@ -629,12 +636,35 @@ describe('handleSessionCreationKeypress', () => {
     }
   });
 
+  it('should return create-session-from-template action when template is non-empty', () => {
+    const { state, overlay: base } = creationState();
+    const overlay = {
+      ...base,
+      fields: { name: 'new-session', template: 'my-template', directory: '/tmp/project', permissionMode: 'bypassPermissions' },
+    };
+    state.overlayStack = [overlay];
+    const result = handleSessionCreationKeypress(
+      state,
+      overlay,
+      KEY_CODES.ENTER,
+    );
+    const { state: s, action } = expectAction(result);
+    expect(s.overlayStack).toHaveLength(0);
+    expect(action.kind).toBe('create-session-from-template');
+    if (action.kind === 'create-session-from-template') {
+      expect(action.name).toBe('new-session');
+      expect(action.templateName).toBe('my-template');
+      expect(action.directory).toBe('/tmp/project');
+      expect(action.permissionMode).toBe('bypassPermissions');
+    }
+  });
+
   it('should clear error when typing after validation failure', () => {
     const { state, overlay: base } = creationState();
     // First trigger validation error
     const overlay = {
       ...base,
-      errors: { name: 'Name is required', directory: '', permissionMode: '' },
+      errors: { name: 'Name is required', template: '', directory: '', permissionMode: '' },
     };
     state.overlayStack = [overlay];
     const s = expectState(handleSessionCreationKeypress(state, overlay, 'a'));

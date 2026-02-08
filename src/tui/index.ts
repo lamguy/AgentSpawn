@@ -3,6 +3,7 @@ import React from 'react';
 import type { SessionManager } from '../core/manager.js';
 import { RegistryWatcher } from '../core/registry-watcher.js';
 import type { HistoryStore } from '../core/history.js';
+import type { TemplateManager } from '../core/template.js';
 import type { Router } from '../io/router.js';
 import { logger } from '../utils/logger.js';
 import { SessionManagerAdapter, RouterAdapter } from './adapters.js';
@@ -29,6 +30,7 @@ export class TUI {
     private readonly routerAdapter: RouterAdapter,
     private readonly outputCapture: OutputCapture,
     private readonly historyStore: HistoryStore | null,
+    private readonly templateManager: TemplateManager | null,
     private readonly options?: TUIOptions,
   ) {
     const attachedSessionName = routerAdapter.getActiveSession() ?? null;
@@ -180,6 +182,9 @@ export class TUI {
       case 'create-session':
         this.handleCreateSession(action.name, action.directory, action.permissionMode);
         break;
+      case 'create-session-from-template':
+        this.handleCreateSessionFromTemplate(action.name, action.templateName, action.directory, action.permissionMode);
+        break;
       case 'stop-session':
         this.handleStopSession(action.sessionName);
         break;
@@ -204,12 +209,13 @@ export class TUI {
   /**
    * Create a new session from the session-creation overlay.
    */
-  private async handleCreateSession(name: string, directory: string, permissionMode: string): Promise<void> {
+  private async handleCreateSession(name: string, directory: string, permissionMode: string, env?: Record<string, string>): Promise<void> {
     try {
       const session = await this.manager.startSession({
         name,
         workingDirectory: directory || process.cwd(),
         permissionMode: permissionMode || 'bypassPermissions',
+        env,
       });
       this.outputCapture.captureSession(name, session);
 
@@ -238,6 +244,39 @@ export class TUI {
           'error',
         );
       }
+      this.forceRerender();
+    }
+  }
+
+  /**
+   * Create a new session from a template, merging template values with form fields.
+   * Form fields override template values when non-empty/non-default.
+   */
+  private async handleCreateSessionFromTemplate(
+    name: string,
+    templateName: string,
+    directory: string,
+    permissionMode: string,
+  ): Promise<void> {
+    if (!this.templateManager) {
+      this.setStatusMessage('Template manager not available', 'error');
+      this.forceRerender();
+      return;
+    }
+
+    try {
+      const template = await this.templateManager.get(templateName);
+
+      // Merge: form fields override template values when non-empty/non-default
+      const mergedDirectory = (directory && directory !== '.') ? directory : (template.workingDirectory ?? '.');
+      const mergedPermissionMode = (permissionMode && permissionMode !== 'bypassPermissions')
+        ? permissionMode
+        : (template.permissionMode ?? 'bypassPermissions');
+
+      await this.handleCreateSession(name, mergedDirectory, mergedPermissionMode, template.env);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : `Template "${templateName}" not found`;
+      this.setStatusMessage(message, 'error');
       this.forceRerender();
     }
   }
@@ -447,7 +486,7 @@ export class TUI {
 export function launchTUI(
   manager: SessionManager,
   router: Router,
-  options?: TUIOptions & { historyStore?: HistoryStore },
+  options?: TUIOptions & { historyStore?: HistoryStore; templateManager?: TemplateManager },
 ): TUI {
   const managerAdapter = new SessionManagerAdapter(manager);
   const routerAdapter = new RouterAdapter(router);
@@ -465,6 +504,7 @@ export function launchTUI(
     routerAdapter,
     outputCapture,
     options?.historyStore ?? null,
+    options?.templateManager ?? null,
     options,
   );
   tui.start();

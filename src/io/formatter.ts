@@ -1,4 +1,4 @@
-import { PromptHistoryEntry, SessionInfo, SessionState, WorkspaceEntry } from '../types.js';
+import { PromptHistoryEntry, SessionInfo, SessionState, TemplateEntry, WorkspaceEntry } from '../types.js';
 
 const GREEN = '\x1b[32m';
 const RED = '\x1b[31m';
@@ -97,6 +97,38 @@ export function formatWorkspaceTable(workspaces: WorkspaceEntry[]): string {
       w.name,
       formatSessionsSummary(w.sessionNames),
       formatRelativeDate(w.createdAt),
+    ];
+  });
+
+  const colWidths = headers.map((h, i) => {
+    const maxRow = rows.reduce((max, row) => Math.max(max, row[i].length), 0);
+    return Math.max(h.length, maxRow);
+  });
+
+  const pad = (str: string, width: number) => str.padEnd(width);
+
+  const headerLine = headers.map((h, i) => `${BOLD}${pad(h, colWidths[i])}${RESET}`).join('  ');
+
+  const bodyLines = rows.map((row) => {
+    return row.map((cell, i) => pad(cell, colWidths[i])).join('  ');
+  });
+
+  return [headerLine, ...bodyLines].join('\n');
+}
+
+export function formatTemplateTable(templates: TemplateEntry[]): string {
+  if (templates.length === 0) {
+    return 'No templates.';
+  }
+
+  const headers = ['NAME', 'DIRECTORY', 'PERMISSION MODE', 'CREATED'];
+
+  const rows = templates.map((t) => {
+    return [
+      t.name,
+      t.workingDirectory ?? '--',
+      t.permissionMode ?? '--',
+      formatRelativeDate(t.createdAt),
     ];
   });
 

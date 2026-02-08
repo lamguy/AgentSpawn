@@ -6,17 +6,17 @@ import { Box, Text, useInput } from 'ink';
  */
 export interface SessionCreationDialogProps {
   /** Current form field values */
-  fields: { name: string; directory: string; permissionMode: string };
+  fields: { name: string; template: string; directory: string; permissionMode: string };
   /** Which form field is currently focused */
-  activeField: 'name' | 'directory' | 'permissionMode';
+  activeField: 'name' | 'template' | 'directory' | 'permissionMode';
   /** Validation errors keyed by field name (empty string = no error) */
-  errors: { name: string; directory: string; permissionMode: string };
+  errors: { name: string; template: string; directory: string; permissionMode: string };
   /** Whether the form submission is in progress */
   isSubmitting: boolean;
   /** Callback when a field value changes */
-  onFieldChange: (field: 'name' | 'directory' | 'permissionMode', value: string) => void;
+  onFieldChange: (field: 'name' | 'template' | 'directory' | 'permissionMode', value: string) => void;
   /** Callback when the active field switches */
-  onFieldSwitch: (field: 'name' | 'directory' | 'permissionMode') => void;
+  onFieldSwitch: (field: 'name' | 'template' | 'directory' | 'permissionMode') => void;
   /** Callback when the user submits the form */
   onSubmit: () => void;
   /** Callback when the user dismisses the dialog */
@@ -61,12 +61,11 @@ export function SessionCreationDialog({
 
       // Tab: switch fields
       if (key.tab) {
-        const nextField =
-          activeField === 'name'
-            ? 'directory'
-            : activeField === 'directory'
-              ? 'permissionMode'
-              : 'name';
+        const fieldOrder: Array<'name' | 'template' | 'directory' | 'permissionMode'> = [
+          'name', 'template', 'directory', 'permissionMode',
+        ];
+        const currentIdx = fieldOrder.indexOf(activeField);
+        const nextField = fieldOrder[(currentIdx + 1) % fieldOrder.length];
         onFieldSwitch(nextField);
         return;
       }
@@ -102,7 +101,7 @@ export function SessionCreationDialog({
 
   const renderField = (
     label: string,
-    field: 'name' | 'directory' | 'permissionMode',
+    field: 'name' | 'template' | 'directory' | 'permissionMode',
     placeholder: string,
   ): React.ReactElement => {
     const isActive = activeField === field;
@@ -169,6 +168,11 @@ export function SessionCreationDialog({
           <Box flexDirection="column">
             {/* Name field */}
             {renderField('Name', 'name', 'session-name')}
+
+            <Box marginTop={1}>
+              {/* Template field */}
+              {renderField('Template (optional)', 'template', 'template-name')}
+            </Box>
 
             <Box marginTop={1}>
               {/* Directory field */}
