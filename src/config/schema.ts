@@ -12,6 +12,8 @@ export function validateConfig(input: unknown): AgentSpawnConfig {
   return {
     registryPath:
       typeof config.registryPath === 'string' ? config.registryPath : DEFAULT_CONFIG.registryPath,
+    workspacesPath:
+      typeof config.workspacesPath === 'string' ? config.workspacesPath : DEFAULT_CONFIG.workspacesPath,
     logLevel: typeof config.logLevel === 'string' ? config.logLevel : DEFAULT_CONFIG.logLevel,
     shutdownTimeoutMs:
       typeof config.shutdownTimeoutMs === 'number'

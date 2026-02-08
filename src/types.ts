@@ -60,8 +60,20 @@ export interface RouterOptions {
   prefixOutput?: boolean;
 }
 
+export interface WorkspaceEntry {
+  name: string;
+  sessionNames: string[];
+  createdAt: string;
+}
+
+export interface WorkspaceData {
+  version: number;
+  workspaces: Record<string, WorkspaceEntry>;
+}
+
 export interface AgentSpawnConfig {
   registryPath: string;
+  workspacesPath?: string;
   logLevel: string;
   shutdownTimeoutMs: number;
 }

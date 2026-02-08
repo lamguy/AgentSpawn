@@ -1,11 +1,14 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   formatSessionOutput,
   formatStatusLine,
   colorForState,
   formatSessionTable,
+  formatWorkspaceTable,
+  formatSessionsSummary,
+  formatRelativeDate,
 } from './formatter.js';
-import { SessionState } from '../types.js';
+import { SessionState, WorkspaceEntry } from '../types.js';
 
 describe('Formatter', () => {
   it('formatSessionOutput prefixes with session name', () => {
@@ -69,5 +72,126 @@ describe('Formatter', () => {
     expect(result).toContain('running');
     expect(result).toContain('crashed');
     expect(result).toContain('--');
+  });
+});
+
+describe('formatWorkspaceTable', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('should return "No workspaces." for empty array', () => {
+    expect(formatWorkspaceTable([])).toBe('No workspaces.');
+  });
+
+  it('should render correct columns (NAME, SESSIONS, CREATED)', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-06-15T12:00:00Z'));
+
+    const workspaces: WorkspaceEntry[] = [
+      {
+        name: 'project-a',
+        sessionNames: ['s1', 's2'],
+        createdAt: '2025-06-15T11:55:00Z',
+      },
+    ];
+
+    const result = formatWorkspaceTable(workspaces);
+    expect(result).toContain('NAME');
+    expect(result).toContain('SESSIONS');
+    expect(result).toContain('CREATED');
+    expect(result).toContain('project-a');
+    expect(result).toContain('2 (s1, s2)');
+    expect(result).toContain('5m ago');
+  });
+
+  it('should render multiple workspaces as rows', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-06-15T12:00:00Z'));
+
+    const workspaces: WorkspaceEntry[] = [
+      {
+        name: 'alpha',
+        sessionNames: [],
+        createdAt: '2025-06-15T12:00:00Z',
+      },
+      {
+        name: 'beta',
+        sessionNames: ['x'],
+        createdAt: '2025-06-15T10:00:00Z',
+      },
+    ];
+
+    const result = formatWorkspaceTable(workspaces);
+    expect(result).toContain('alpha');
+    expect(result).toContain('beta');
+    expect(result).toContain('0');
+    expect(result).toContain('1 (x)');
+  });
+});
+
+describe('formatSessionsSummary', () => {
+  it('should return "0" for empty array', () => {
+    expect(formatSessionsSummary([])).toBe('0');
+  });
+
+  it('should show count and all names for 1-3 sessions', () => {
+    expect(formatSessionsSummary(['a'])).toBe('1 (a)');
+    expect(formatSessionsSummary(['a', 'b'])).toBe('2 (a, b)');
+    expect(formatSessionsSummary(['a', 'b', 'c'])).toBe('3 (a, b, c)');
+  });
+
+  it('should truncate with "..." for 4+ sessions', () => {
+    const result = formatSessionsSummary(['a', 'b', 'c', 'd']);
+    expect(result).toBe('4 (a, b, c, ...)');
+  });
+
+  it('should truncate with "..." for many sessions', () => {
+    const result = formatSessionsSummary(['s1', 's2', 's3', 's4', 's5', 's6']);
+    expect(result).toBe('6 (s1, s2, s3, ...)');
+  });
+});
+
+describe('formatRelativeDate', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('should return "just now" for dates less than 60 seconds ago', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-06-15T12:00:30Z'));
+
+    expect(formatRelativeDate('2025-06-15T12:00:00Z')).toBe('just now');
+  });
+
+  it('should return "Xm ago" for dates minutes ago', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-06-15T12:05:00Z'));
+
+    expect(formatRelativeDate('2025-06-15T12:00:00Z')).toBe('5m ago');
+  });
+
+  it('should return "Xh ago" for dates hours ago', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-06-15T15:00:00Z'));
+
+    expect(formatRelativeDate('2025-06-15T12:00:00Z')).toBe('3h ago');
+  });
+
+  it('should return "Xd ago" for dates days ago', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-06-20T12:00:00Z'));
+
+    expect(formatRelativeDate('2025-06-15T12:00:00Z')).toBe('5d ago');
+  });
+
+  it('should return locale date string for dates 30+ days ago', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-08-15T12:00:00Z'));
+
+    const result = formatRelativeDate('2025-06-15T12:00:00Z');
+    // Should be a locale date string, not "Xd ago"
+    expect(result).not.toContain('d ago');
+    expect(result).not.toContain('just now');
   });
 });

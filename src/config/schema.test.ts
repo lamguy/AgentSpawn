@@ -7,6 +7,7 @@ describe('validateConfig', () => {
   it('valid full config returns the config as-is', () => {
     const input = {
       registryPath: '/custom/path.json',
+      workspacesPath: '/custom/workspaces.json',
       logLevel: 'debug',
       shutdownTimeoutMs: 10000,
     };
@@ -19,6 +20,7 @@ describe('validateConfig', () => {
     const result = validateConfig(input);
     expect(result).toEqual({
       registryPath: '/my/registry.json',
+      workspacesPath: DEFAULT_CONFIG.workspacesPath,
       logLevel: DEFAULT_CONFIG.logLevel,
       shutdownTimeoutMs: DEFAULT_CONFIG.shutdownTimeoutMs,
     });

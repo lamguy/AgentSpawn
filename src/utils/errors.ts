@@ -46,6 +46,37 @@ export class SpawnFailedError extends AgentSpawnError {
   }
 }
 
+export class WorkspaceNotFoundError extends AgentSpawnError {
+  constructor(name: string) {
+    super(`Workspace not found: ${name}`, 'WORKSPACE_NOT_FOUND');
+    this.name = 'WorkspaceNotFoundError';
+  }
+}
+
+export class WorkspaceAlreadyExistsError extends AgentSpawnError {
+  constructor(name: string) {
+    super(`Workspace already exists: ${name}`, 'WORKSPACE_ALREADY_EXISTS');
+    this.name = 'WorkspaceAlreadyExistsError';
+  }
+}
+
+export class WorkspaceCorruptError extends AgentSpawnError {
+  constructor(path: string) {
+    super(`Workspace file is corrupt: ${path}`, 'WORKSPACE_CORRUPT');
+    this.name = 'WorkspaceCorruptError';
+  }
+}
+
+export class WorkspaceLockError extends AgentSpawnError {
+  constructor(path: string, cause?: Error) {
+    super(`Failed to acquire lock on workspace file: ${path}`, 'WORKSPACE_LOCK_FAILED');
+    this.name = 'WorkspaceLockError';
+    if (cause) {
+      this.cause = cause;
+    }
+  }
+}
+
 export class PromptTimeoutError extends AgentSpawnError {
   constructor(
     public readonly sessionName: string,

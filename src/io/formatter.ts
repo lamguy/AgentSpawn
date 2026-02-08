@@ -1,4 +1,4 @@
-import { SessionInfo, SessionState } from '../types.js';
+import { SessionInfo, SessionState, WorkspaceEntry } from '../types.js';
 
 const GREEN = '\x1b[32m';
 const RED = '\x1b[31m';
@@ -57,6 +57,60 @@ export function formatSessionTable(sessions: SessionInfo[]): string {
         return pad(cell, colWidths[i]);
       })
       .join('  ');
+  });
+
+  return [headerLine, ...bodyLines].join('\n');
+}
+
+export function formatSessionsSummary(sessionNames: string[]): string {
+  const count = sessionNames.length;
+  if (count === 0) return '0';
+  const preview = sessionNames.slice(0, 3).join(', ');
+  if (count <= 3) return `${count} (${preview})`;
+  return `${count} (${preview}, ...)`;
+}
+
+export function formatRelativeDate(isoDate: string): string {
+  const date = new Date(isoDate);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffSec = Math.floor(diffMs / 1000);
+  if (diffSec < 60) return 'just now';
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDay = Math.floor(diffHr / 24);
+  if (diffDay < 30) return `${diffDay}d ago`;
+  return date.toLocaleDateString();
+}
+
+export function formatWorkspaceTable(workspaces: WorkspaceEntry[]): string {
+  if (workspaces.length === 0) {
+    return 'No workspaces.';
+  }
+
+  const headers = ['NAME', 'SESSIONS', 'CREATED'];
+
+  const rows = workspaces.map((w) => {
+    return [
+      w.name,
+      formatSessionsSummary(w.sessionNames),
+      formatRelativeDate(w.createdAt),
+    ];
+  });
+
+  const colWidths = headers.map((h, i) => {
+    const maxRow = rows.reduce((max, row) => Math.max(max, row[i].length), 0);
+    return Math.max(h.length, maxRow);
+  });
+
+  const pad = (str: string, width: number) => str.padEnd(width);
+
+  const headerLine = headers.map((h, i) => `${BOLD}${pad(h, colWidths[i])}${RESET}`).join('  ');
+
+  const bodyLines = rows.map((row) => {
+    return row.map((cell, i) => pad(cell, colWidths[i])).join('  ');
   });
 
   return [headerLine, ...bodyLines].join('\n');

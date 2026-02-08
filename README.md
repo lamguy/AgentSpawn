@@ -22,10 +22,10 @@ Manage multiple Claude Code instances from a single terminal. Start, stop, switc
   <img src="docs/screenshots/cli-help.gif" alt="agentspawn --help" width="700">
 </p>
 
-### Test Suite (268 tests)
+### Test Suite (381 tests)
 
 <p align="center">
-  <img src="docs/screenshots/tests.gif" alt="Test suite — 268 tests passing" width="700">
+  <img src="docs/screenshots/tests.gif" alt="Test suite — 381 tests passing" width="700">
 </p>
 
 ## Install
@@ -78,6 +78,20 @@ agentspawn stop project-a                 # Stop a session
 agentspawn stop --all                     # Stop everything
 ```
 
+### Workspaces
+
+Group related sessions into named workspaces for easier management:
+
+```bash
+agentspawn workspace create my-project           # Create a workspace
+agentspawn workspace add my-project api web db   # Add sessions to it
+agentspawn workspace list                        # See all workspaces
+agentspawn workspace list --json                 # Machine-readable JSON
+agentspawn workspace switch my-project           # Check status of all sessions
+agentspawn workspace remove my-project db        # Remove a session from workspace
+agentspawn workspace delete my-project           # Delete the workspace
+```
+
 ## Commands
 
 | Command | Description |
@@ -88,6 +102,7 @@ agentspawn stop --all                     # Stop everything
 | `agentspawn list` | Show all sessions with status |
 | `agentspawn exec <name> <cmd>` | Send a prompt to a session |
 | `agentspawn switch <name>` | Attach to a session (interactive prompt mode) |
+| `agentspawn workspace <cmd>` | Manage session workspaces (create, add, remove, list, switch, delete) |
 
 Every command supports `--help` for detailed usage.
 
@@ -97,11 +112,13 @@ Every command supports `--help` for detailed usage.
 - **Overlay system** — help, action menu, session creation, and confirmation dialogs
 - **Prompt-based sessions** — uses `claude --print` per prompt, keeping the TUI in control at all times
 - **Conversation persistence** — session IDs and prompt counts survive TUI restarts
-- **Cross-process discovery** — TUI polls the registry to discover sessions started by other processes
-- **Persistent registry** — session state persists via `~/.agentspawn/sessions.json`
+- **Workspaces** — group related sessions into named workspaces for batch management
+- **Cross-process discovery** — event-based registry watching to discover sessions started by other processes
+- **Persistent registry** — session state persists via `~/.agentspawn/sessions.json` with file locking
+- **Prompt timeout** — configurable timeout for hung Claude processes (default 5 min)
 - **Stale PID detection** — validates registry PIDs on startup, marks dead sessions as crashed
 - **Graceful shutdown** — SIGTERM first, SIGKILL after configurable timeout (default 5s)
-- **Real-time output** — streaming response display with timestamps and error highlighting
+- **Real-time output** — streaming response display with timestamps, error highlighting, and memory-bounded buffers
 - **Scriptable** — `--json` flag, proper exit codes (0 success, 1 user error, 2 system error)
 
 ## Development
@@ -130,7 +147,7 @@ node dist/index.js tui # Launch the TUI
 ### Test
 
 ```bash
-npm test               # Run all 268 tests (mocked — no real Claude needed)
+npm test               # Run all 381 tests (mocked — no real Claude needed)
 ```
 
 ### Lint & Format
@@ -147,12 +164,14 @@ npm run typecheck      # TypeScript strict mode type checking
 ```
 src/
   cli/              Command definitions and argument parsing
-    commands/       start, stop, list, exec, switch, tui
+    commands/       start, stop, list, exec, switch, tui, workspace
     index.ts        CLI entry point
   core/             Session lifecycle management
     session.ts      Prompt-based sessions using claude --print
     manager.ts      Session orchestration, registry polling, adoption
-    registry.ts     JSON file persistence with corruption detection
+    registry.ts     JSON file persistence with file locking
+    registry-watcher.ts  Event-based registry file watching
+    workspace.ts    Workspace management (session grouping)
   io/               I/O multiplexing
     router.ts       Attaches/detaches terminal I/O to sessions
     formatter.ts    ANSI colored output, session table formatting
