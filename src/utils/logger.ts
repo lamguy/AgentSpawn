@@ -36,3 +36,5 @@ export class Logger {
     }
   }
 }
+
+export const logger = new Logger(process.env.AGENTSPAWN_LOG_LEVEL ?? 'info');

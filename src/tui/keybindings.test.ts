@@ -12,6 +12,7 @@ import {
 import type { KeyHandlerResult } from './keybindings.js';
 import type {
   TUIState,
+  TUIAction,
   HelpOverlayState,
   ActionMenuOverlayState,
   SessionCreationOverlayState,
@@ -54,7 +55,7 @@ function expectQuit(result: KeyHandlerResult): void {
 
 function expectAction(result: KeyHandlerResult): {
   state: TUIState;
-  action: { kind: string };
+  action: TUIAction;
 } {
   expect(result.kind).toBe('action');
   if (result.kind !== 'action') throw new Error('Expected action result');
@@ -631,7 +632,7 @@ describe('handleSessionCreationKeypress', () => {
     // First trigger validation error
     const overlay = {
       ...base,
-      errors: { name: 'Name is required', directory: '' },
+      errors: { name: 'Name is required', directory: '', permissionMode: '' },
     };
     state.overlayStack = [overlay];
     const s = expectState(handleSessionCreationKeypress(state, overlay, 'a'));

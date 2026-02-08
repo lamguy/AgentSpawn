@@ -186,4 +186,8 @@ export interface OutputCaptureConfig {
   maxLinesPerSession?: number;
   /** Whether to capture stderr separately */
   captureStderr?: boolean;
+  /** Maximum total lines across all sessions. 0 or Infinity = disabled. Default: 10000 */
+  maxTotalLines?: number;
+  /** Maximum characters per line. Lines exceeding this are truncated. 0 or Infinity = disabled. Default: 10000 */
+  maxLineLength?: number;
 }

@@ -20,6 +20,7 @@ describe('Formatter', () => {
       state: SessionState.Running,
       startedAt: new Date(),
       workingDirectory: '/tmp/work',
+      promptCount: 0,
     });
     expect(result).toContain('agent-1');
     expect(result).toContain('running');
@@ -51,6 +52,7 @@ describe('Formatter', () => {
         state: SessionState.Running,
         startedAt: new Date('2025-01-01T00:00:00Z'),
         workingDirectory: '/tmp/a',
+        promptCount: 0,
       },
       {
         name: 'agent-2',
@@ -58,6 +60,7 @@ describe('Formatter', () => {
         state: SessionState.Crashed,
         startedAt: null,
         workingDirectory: '/tmp/b',
+        promptCount: 0,
       },
     ];
     const result = formatSessionTable(sessions);

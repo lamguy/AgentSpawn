@@ -19,6 +19,7 @@ export interface SessionConfig {
   workingDirectory: string;
   env?: Record<string, string>;
   permissionMode?: string;
+  promptTimeoutMs?: number;
 }
 
 export interface SessionInfo {

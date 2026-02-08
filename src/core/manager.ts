@@ -8,13 +8,14 @@ import {
   RegistryEntry,
 } from '../types.js';
 import { SessionAlreadyExistsError, SessionNotFoundError } from '../utils/errors.js';
+import { logger } from '../utils/logger.js';
 import os from 'node:os';
 import path from 'node:path';
 
 export class SessionManager {
   private sessions: Map<string, Session> = new Map();
   private registryEntries: Map<string, RegistryEntry> = new Map();
-  private readonly registry: Registry;
+  readonly registry: Registry;
 
   constructor(private readonly options?: ManagerOptions) {
     let registryPath =
@@ -28,27 +29,28 @@ export class SessionManager {
   }
 
   async init(): Promise<void> {
-    const data = await this.registry.load();
+    await this.registry.withLock((data) => {
+      for (const [name, entry] of Object.entries(data.sessions)) {
+        if (entry.state === SessionState.Running && entry.pid > 0) {
+          let alive = false;
+          try {
+            process.kill(entry.pid, 0);
+            alive = true;
+          } catch {
+            alive = false;
+          }
 
-    for (const [name, entry] of Object.entries(data.sessions)) {
-      if (entry.state === SessionState.Running && entry.pid > 0) {
-        // Only check PID liveness for sessions with a real persistent process.
-        // Prompt-based sessions (pid === 0) have no persistent process to check.
-        let alive = false;
-        try {
-          process.kill(entry.pid, 0);
-          alive = true;
-        } catch {
-          alive = false;
-        }
-
-        if (!alive) {
-          entry.state = SessionState.Crashed;
-          data.sessions[name] = entry;
-          await this.registry.save(data);
+          if (!alive) {
+            logger.warn(`Detected crashed session "${name}" (pid ${entry.pid})`);
+            entry.state = SessionState.Crashed;
+          }
         }
       }
+    });
 
+    // Re-read after lock release to populate in-memory cache
+    const data = await this.registry.load();
+    for (const [name, entry] of Object.entries(data.sessions)) {
       this.registryEntries.set(name, entry);
     }
   }
@@ -58,13 +60,9 @@ export class SessionManager {
       throw new SessionAlreadyExistsError(config.name);
     }
 
-    const registryData = await this.registry.load();
-    if (registryData.sessions[config.name]) {
-      throw new SessionAlreadyExistsError(config.name);
-    }
-
     const session = new Session(config, this.options?.shutdownTimeoutMs, claudeSessionId, promptCount);
     await session.start();
+    logger.info(`Session "${config.name}" started in ${config.workingDirectory}`);
 
     const info = session.getInfo();
     const entry: RegistryEntry = {
@@ -80,7 +78,12 @@ export class SessionManager {
     };
 
     try {
-      await this.registry.addEntry(entry);
+      await this.registry.withLock((data) => {
+        if (data.sessions[config.name]) {
+          throw new SessionAlreadyExistsError(config.name);
+        }
+        data.sessions[config.name] = entry;
+      });
     } catch (err) {
       await session.stop();
       throw err;
@@ -99,6 +102,7 @@ export class SessionManager {
       await this.registry.removeEntry(name);
       this.sessions.delete(name);
       this.registryEntries.delete(name);
+      logger.info(`Session "${name}" stopped`);
       return;
     }
 

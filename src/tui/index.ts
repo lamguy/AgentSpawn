@@ -1,7 +1,9 @@
 import { render } from 'ink';
 import React from 'react';
 import type { SessionManager } from '../core/manager.js';
+import { RegistryWatcher } from '../core/registry-watcher.js';
 import type { Router } from '../io/router.js';
+import { logger } from '../utils/logger.js';
 import { SessionManagerAdapter, RouterAdapter } from './adapters.js';
 import { OutputCapture } from './output-capture.js';
 import type { TUIOptions, TUIState, TUIAction, StatusMessage } from './types.js';
@@ -16,7 +18,7 @@ const STATUS_MESSAGE_TTL = 5000;
 export class TUI {
   private state: TUIState;
   private renderInstance: ReturnType<typeof render> | null = null;
-  private updateInterval: NodeJS.Timeout | null = null;
+  private registryWatcher: RegistryWatcher | null = null;
   private resizeHandler: (() => void) | null = null;
 
   constructor(
@@ -82,10 +84,13 @@ export class TUI {
       React.createElement(TUIApp, this.buildAppProps()),
     );
 
-    // Periodic state updates
-    this.updateInterval = setInterval(() => {
+    // Watch registry for changes instead of fixed-interval polling
+    this.registryWatcher = new RegistryWatcher({
+      registryPath: this.manager.registry.getFilePath(),
+    });
+    this.registryWatcher.watch(() => {
       this.updateState();
-    }, 500);
+    });
 
     // Handle terminal resize
     this.resizeHandler = (): void => {
@@ -100,9 +105,9 @@ export class TUI {
   stop(): void {
     this.state.isShuttingDown = true;
 
-    if (this.updateInterval) {
-      clearInterval(this.updateInterval);
-      this.updateInterval = null;
+    if (this.registryWatcher) {
+      this.registryWatcher.unwatch();
+      this.registryWatcher = null;
     }
 
     if (this.resizeHandler) {
@@ -204,6 +209,7 @@ export class TUI {
       this.state.overlayStack = [];
       this.state.selectedSessionName = name;
       this.setStatusMessage(`Session "${name}" created`, 'success');
+      this.registryWatcher?.notifyWrite();
       this.forceRerender();
     } catch (err) {
       // Show error in the session-creation overlay
@@ -235,6 +241,7 @@ export class TUI {
     try {
       await this.manager.stopSession(sessionName);
       this.setStatusMessage(`Session "${sessionName}" stopped`, 'success');
+      this.registryWatcher?.notifyWrite();
     } catch (err) {
       this.setStatusMessage(
         err instanceof Error ? err.message : `Failed to stop "${sessionName}"`,
@@ -263,6 +270,7 @@ export class TUI {
       });
       this.outputCapture.captureSession(sessionName, session);
       this.setStatusMessage(`Session "${sessionName}" restarted`, 'success');
+      this.registryWatcher?.notifyWrite();
     } catch (err) {
       this.setStatusMessage(
         err instanceof Error ? err.message : `Failed to restart "${sessionName}"`,
@@ -279,6 +287,7 @@ export class TUI {
     try {
       await this.manager.stopAll();
       this.setStatusMessage('All sessions stopped', 'success');
+      this.registryWatcher?.notifyWrite();
     } catch (err) {
       this.setStatusMessage(
         err instanceof Error ? err.message : 'Failed to stop all sessions',
@@ -381,7 +390,9 @@ export function launchTUI(
 
   const outputCapture = new OutputCapture({
     maxLinesPerSession: 1000,
-  });
+    maxTotalLines: 10000,
+    maxLineLength: 10000,
+  }, logger);
 
   const tui = new TUI(
     manager,

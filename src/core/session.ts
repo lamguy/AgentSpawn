@@ -1,6 +1,8 @@
 import { spawn, ChildProcess } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 import { SessionState, SessionConfig, SessionInfo } from '../types.js';
+import { logger } from '../utils/logger.js';
+import { PromptTimeoutError } from '../utils/errors.js';
 import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
 
@@ -57,9 +59,24 @@ export class Session extends EventEmitter {
       throw new Error(`Session "${this.config.name}" is already processing a prompt`);
     }
 
+    logger.info(`Sending prompt to session "${this.config.name}"`);
     this.emit('promptStart', prompt);
 
+    const timeoutMs = this.config.promptTimeoutMs ?? 300000;
+
     return new Promise<string>((resolve, reject) => {
+      let settled = false;
+      let timedOut = false;
+      let timeoutTimer: NodeJS.Timeout | undefined;
+
+      const settle = (): void => {
+        settled = true;
+        if (timeoutTimer) {
+          clearTimeout(timeoutTimer);
+          timeoutTimer = undefined;
+        }
+      };
+
       // Build args: first prompt uses --session-id, subsequent use --resume
       const args = ['--print', '--output-format', 'stream-json', '--verbose'];
       if (this.promptCount === 0) {
@@ -116,6 +133,9 @@ export class Session extends EventEmitter {
       });
 
       child.on('error', (err: Error) => {
+        if (settled) return;
+        settle();
+        logger.error(`Spawn error for session "${this.config.name}": ${err.message}`);
         this.activeProcess = null;
         this.emit('promptError', err);
         reject(err);
@@ -139,10 +159,27 @@ export class Session extends EventEmitter {
         this.activeProcess = null;
         this.promptCount++;
 
+        if (timedOut) {
+          settle();
+          const err = new PromptTimeoutError(this.config.name, timeoutMs, prompt);
+          this.emit('promptTimeout', {
+            sessionName: this.config.name,
+            timeoutMs,
+            promptText: prompt,
+            partialResponse: response,
+          });
+          reject(err);
+          return;
+        }
+
+        settle();
+
         if (code === 0) {
+          logger.info(`Prompt completed for session "${this.config.name}"`);
           this.emit('promptComplete', response);
           resolve(response);
         } else {
+          logger.error(`Prompt failed for session "${this.config.name}" (exit code ${code})`);
           const err = new Error(`Claude exited with code ${code}`);
           this.emit('promptError', err);
           reject(err);
@@ -152,6 +189,40 @@ export class Session extends EventEmitter {
       // Write prompt to stdin and close it
       child.stdin?.write(prompt);
       child.stdin?.end();
+
+      // Set up timeout if enabled (timeoutMs > 0; 0 means no timeout)
+      if (timeoutMs > 0) {
+        timeoutTimer = setTimeout(() => {
+          if (settled) return;
+          timedOut = true;
+          logger.warn(`Prompt timed out after ${timeoutMs}ms in session "${this.config.name}"`);
+          try {
+            child.kill('SIGTERM');
+          } catch {
+            // Already dead
+          }
+          // Grace period: SIGKILL if child doesn't exit
+          const graceMs = this.shutdownTimeoutMs;
+          let graceTimer: NodeJS.Timeout | undefined = setTimeout(() => {
+            graceTimer = undefined;
+            if (this.activeProcess === child) {
+              try {
+                child.kill('SIGKILL');
+              } catch {
+                // Already dead
+              }
+            }
+          }, graceMs);
+
+          // Clear grace timer if child exits promptly after SIGTERM
+          child.once('close', () => {
+            if (graceTimer) {
+              clearTimeout(graceTimer);
+              graceTimer = undefined;
+            }
+          });
+        }, timeoutMs);
+      }
     });
   }
 

@@ -1,8 +1,9 @@
 import { EventEmitter } from 'node:events';
-import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as childProcess from 'node:child_process';
 import { Session } from './session.js';
 import { SessionState, SessionConfig } from '../types.js';
+import { PromptTimeoutError } from '../utils/errors.js';
 
 vi.mock('node:child_process', () => ({
   spawn: vi.fn(),
@@ -438,5 +439,214 @@ describe('Session', () => {
 
     const info = permSession.getInfo();
     expect(info.permissionMode).toBe('bypassPermissions');
+  });
+
+  describe('prompt timeout', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('should reject with PromptTimeoutError after timeout elapses', async () => {
+      const timeoutConfig: SessionConfig = {
+        name: 'timeout-session',
+        workingDirectory: '/tmp/timeout',
+        promptTimeoutMs: 1000,
+      };
+      const timeoutSession = new Session(timeoutConfig);
+      await timeoutSession.start();
+
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const p = timeoutSession.sendPrompt('slow prompt');
+
+      // Advance past the timeout
+      vi.advanceTimersByTime(1000);
+
+      // Simulate the child exiting after SIGTERM
+      mockChild.emit('close', null);
+
+      await expect(p).rejects.toThrow(PromptTimeoutError);
+      await expect(p).rejects.toThrow('Prompt timed out after 1000ms');
+    });
+
+    it('should emit promptTimeout event with correct data shape before rejection', async () => {
+      const timeoutConfig: SessionConfig = {
+        name: 'timeout-session',
+        workingDirectory: '/tmp/timeout',
+        promptTimeoutMs: 2000,
+      };
+      const timeoutSession = new Session(timeoutConfig);
+      await timeoutSession.start();
+
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const timeoutHandler = vi.fn();
+      timeoutSession.on('promptTimeout', timeoutHandler);
+
+      const p = timeoutSession.sendPrompt('my prompt');
+
+      // Emit some partial data before timeout
+      mockChild.stdout.emit('data', assistantEvent('partial'));
+
+      vi.advanceTimersByTime(2000);
+      mockChild.emit('close', null);
+
+      await expect(p).rejects.toThrow(PromptTimeoutError);
+
+      expect(timeoutHandler).toHaveBeenCalledTimes(1);
+      expect(timeoutHandler).toHaveBeenCalledWith({
+        sessionName: 'timeout-session',
+        timeoutMs: 2000,
+        promptText: 'my prompt',
+        partialResponse: 'partial',
+      });
+    });
+
+    it('should send SIGTERM to child process on timeout', async () => {
+      const timeoutConfig: SessionConfig = {
+        name: 'timeout-session',
+        workingDirectory: '/tmp/timeout',
+        promptTimeoutMs: 500,
+      };
+      const timeoutSession = new Session(timeoutConfig);
+      await timeoutSession.start();
+
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const p = timeoutSession.sendPrompt('test');
+
+      vi.advanceTimersByTime(500);
+
+      expect(mockChild.kill).toHaveBeenCalledWith('SIGTERM');
+
+      mockChild.emit('close', null);
+      await p.catch(() => {}); // Consume rejection
+    });
+
+    it('should clear timeout timer on normal completion (no leak)', async () => {
+      const timeoutConfig: SessionConfig = {
+        name: 'timeout-session',
+        workingDirectory: '/tmp/timeout',
+        promptTimeoutMs: 5000,
+      };
+      const timeoutSession = new Session(timeoutConfig);
+      await timeoutSession.start();
+
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
+
+      const p = timeoutSession.sendPrompt('fast prompt');
+
+      // Complete normally before timeout
+      mockChild.stdout.emit('data', assistantEvent('done'));
+      mockChild.emit('close', 0);
+
+      await p;
+
+      // clearTimeout should have been called by settle()
+      expect(clearTimeoutSpy).toHaveBeenCalled();
+
+      // Advance timers past original timeout — no timeout should fire
+      vi.advanceTimersByTime(10000);
+
+      clearTimeoutSpy.mockRestore();
+    });
+
+    it('should apply default timeout of 300000ms when promptTimeoutMs is not set', async () => {
+      // config without promptTimeoutMs — default should be 300000
+      await session.start();
+
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const timeoutHandler = vi.fn();
+      session.on('promptTimeout', timeoutHandler);
+
+      const p = session.sendPrompt('default timeout');
+
+      // Advance just under the default — should NOT have timed out
+      vi.advanceTimersByTime(299999);
+      expect(mockChild.kill).not.toHaveBeenCalled();
+
+      // Advance past the default
+      vi.advanceTimersByTime(1);
+      expect(mockChild.kill).toHaveBeenCalledWith('SIGTERM');
+
+      mockChild.emit('close', null);
+      await expect(p).rejects.toThrow(PromptTimeoutError);
+
+      expect(timeoutHandler).toHaveBeenCalledWith(
+        expect.objectContaining({ timeoutMs: 300000 }),
+      );
+    });
+
+    it('should disable timeout when promptTimeoutMs is 0', async () => {
+      const noTimeoutConfig: SessionConfig = {
+        name: 'no-timeout-session',
+        workingDirectory: '/tmp/no-timeout',
+        promptTimeoutMs: 0,
+      };
+      const noTimeoutSession = new Session(noTimeoutConfig);
+      await noTimeoutSession.start();
+
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const p = noTimeoutSession.sendPrompt('no timeout prompt');
+
+      // Advance a very long time — should NOT trigger timeout
+      vi.advanceTimersByTime(600000);
+      expect(mockChild.kill).not.toHaveBeenCalled();
+
+      // Complete normally
+      mockChild.stdout.emit('data', assistantEvent('response'));
+      mockChild.emit('close', 0);
+
+      const result = await p;
+      expect(result).toBe('response');
+    });
+
+    it('should not double-resolve when close and timeout race', async () => {
+      const timeoutConfig: SessionConfig = {
+        name: 'race-session',
+        workingDirectory: '/tmp/race',
+        promptTimeoutMs: 1000,
+      };
+      const raceSession = new Session(timeoutConfig);
+      await raceSession.start();
+
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const p = raceSession.sendPrompt('race prompt');
+
+      // Complete normally first (before timeout fires)
+      mockChild.stdout.emit('data', assistantEvent('done'));
+      mockChild.emit('close', 0);
+
+      const result = await p;
+      expect(result).toBe('done');
+
+      // Now advance past the timeout — the settled guard should prevent
+      // any further action (no SIGTERM, no PromptTimeoutError)
+      vi.advanceTimersByTime(1000);
+      expect(mockChild.kill).not.toHaveBeenCalled();
+    });
   });
 });

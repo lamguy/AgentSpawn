@@ -1,7 +1,8 @@
 import { EventEmitter } from 'node:events';
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { OutputCapture } from './output-capture.js';
 import type { Session } from '../core/session.js';
+import type { Logger } from '../utils/logger.js';
 
 /**
  * Create a mock Session as a plain EventEmitter.
@@ -430,6 +431,361 @@ describe('OutputCapture', () => {
   describe('getLines for unknown session', () => {
     it('should return an empty array for a session that was never captured', () => {
       expect(capture.getLines('nonexistent')).toEqual([]);
+    });
+  });
+
+  // ── maxTotalLines (global eviction) ────────────────────────────────────
+
+  describe('maxTotalLines global eviction', () => {
+    it('should evict oldest lines across all sessions when totalLineCount exceeds maxTotalLines', () => {
+      const cap = new OutputCapture({ maxTotalLines: 5, maxLinesPerSession: 10 });
+      const sessionA = createMockSession();
+      const sessionB = createMockSession();
+
+      cap.captureSession('a', sessionA);
+      cap.captureSession('b', sessionB);
+
+      // Add 3 lines to session a (timestamps earlier)
+      sessionA.emit('data', 'a1');
+      sessionA.emit('data', 'a2');
+      sessionA.emit('data', 'a3');
+
+      // Add 3 lines to session b (timestamps later) -- total = 6, exceeds 5
+      sessionB.emit('data', 'b1');
+      sessionB.emit('data', 'b2');
+      sessionB.emit('data', 'b3');
+
+      // Should have evicted the oldest line (a1) to get back to 5
+      const linesA = cap.getLines('a');
+      const linesB = cap.getLines('b');
+
+      expect(linesA.length + linesB.length).toBe(5);
+      // a1 was the oldest, so it should be evicted
+      expect(linesA[0].text).toBe('a2');
+      expect(linesB).toHaveLength(3);
+    });
+
+    it('should evict from the session with the oldest line first', () => {
+      const cap = new OutputCapture({ maxTotalLines: 4, maxLinesPerSession: 10 });
+      const sessionA = createMockSession();
+      const sessionB = createMockSession();
+
+      cap.captureSession('a', sessionA);
+      cap.captureSession('b', sessionB);
+
+      // Interleave so that oldest is always in session a
+      sessionA.emit('data', 'a1');
+      sessionB.emit('data', 'b1');
+      sessionA.emit('data', 'a2');
+      sessionB.emit('data', 'b2');
+      // total=4, at limit
+
+      // Push one more into session b, total=5, evicts a1
+      sessionB.emit('data', 'b3');
+
+      const linesA = cap.getLines('a');
+      expect(linesA).toHaveLength(1);
+      expect(linesA[0].text).toBe('a2');
+
+      const linesB = cap.getLines('b');
+      expect(linesB).toHaveLength(3);
+    });
+
+    it('should use default maxTotalLines of 10000 when not specified', () => {
+      const cap = new OutputCapture({ maxLinesPerSession: 5000 });
+      const sessionA = createMockSession();
+      const sessionB = createMockSession();
+      const sessionC = createMockSession();
+
+      cap.captureSession('a', sessionA);
+      cap.captureSession('b', sessionB);
+      cap.captureSession('c', sessionC);
+
+      // Add 4000 lines to each session (12000 total, exceeds 10000)
+      for (let i = 0; i < 4000; i++) {
+        sessionA.emit('data', `a-${i}`);
+      }
+      for (let i = 0; i < 4000; i++) {
+        sessionB.emit('data', `b-${i}`);
+      }
+      for (let i = 0; i < 4000; i++) {
+        sessionC.emit('data', `c-${i}`);
+      }
+
+      const total =
+        cap.getLines('a').length +
+        cap.getLines('b').length +
+        cap.getLines('c').length;
+
+      expect(total).toBe(10000);
+    });
+
+    it('should remove empty session buffer from map after global eviction', () => {
+      const cap = new OutputCapture({ maxTotalLines: 3, maxLinesPerSession: 10 });
+      const sessionA = createMockSession();
+      const sessionB = createMockSession();
+
+      cap.captureSession('a', sessionA);
+      cap.captureSession('b', sessionB);
+
+      // Add 1 line to session a
+      sessionA.emit('data', 'a1');
+
+      // Add 3 lines to session b -- total=4, exceeds 3, evicts a1
+      sessionB.emit('data', 'b1');
+      sessionB.emit('data', 'b2');
+      sessionB.emit('data', 'b3');
+
+      // Session a buffer should be removed from the map since it's empty
+      expect(cap.getSessionNames()).not.toContain('a');
+      expect(cap.getLines('a')).toEqual([]);
+      expect(cap.getLines('b')).toHaveLength(3);
+    });
+
+    it('should not evict when maxTotalLines is Infinity (disabled)', () => {
+      const cap = new OutputCapture({ maxTotalLines: Infinity, maxLinesPerSession: 100 });
+      const sessionA = createMockSession();
+
+      cap.captureSession('a', sessionA);
+
+      for (let i = 0; i < 50; i++) {
+        sessionA.emit('data', `line-${i}`);
+      }
+
+      expect(cap.getLines('a')).toHaveLength(50);
+    });
+
+    it('should not evict when maxTotalLines is 0 (treated as Infinity)', () => {
+      const cap = new OutputCapture({ maxTotalLines: 0, maxLinesPerSession: 100 });
+      const sessionA = createMockSession();
+
+      cap.captureSession('a', sessionA);
+
+      for (let i = 0; i < 50; i++) {
+        sessionA.emit('data', `line-${i}`);
+      }
+
+      expect(cap.getLines('a')).toHaveLength(50);
+    });
+  });
+
+  // ── maxLineLength (line truncation) ────────────────────────────────────
+
+  describe('maxLineLength line truncation', () => {
+    it('should truncate lines exceeding maxLineLength and append " [truncated]"', () => {
+      const cap = new OutputCapture({ maxLineLength: 20 });
+      cap.captureSession('alpha', session);
+
+      session.emit('data', 'short');
+      session.emit('data', 'this is a very long line that exceeds the limit');
+
+      const lines = cap.getLines('alpha');
+      expect(lines[0].text).toBe('short');
+      expect(lines[1].text).toBe('this is a very long  [truncated]');
+      expect(lines[1].text.startsWith('this is a very long ')).toBe(true);
+      expect(lines[1].text.endsWith(' [truncated]')).toBe(true);
+    });
+
+    it('should not truncate lines at or under the maxLineLength', () => {
+      const cap = new OutputCapture({ maxLineLength: 10 });
+      cap.captureSession('alpha', session);
+
+      session.emit('data', '1234567890'); // exactly 10 chars
+      session.emit('data', '123456789');  // 9 chars
+
+      const lines = cap.getLines('alpha');
+      expect(lines[0].text).toBe('1234567890');
+      expect(lines[1].text).toBe('123456789');
+    });
+
+    it('should truncate promptStart lines that exceed maxLineLength', () => {
+      const longPrompt = 'x'.repeat(50);
+      const cap = new OutputCapture({ maxLineLength: 20 });
+      cap.captureSession('alpha', session);
+
+      session.emit('promptStart', longPrompt);
+
+      const lines = cap.getLines('alpha');
+      // The text is "You: " + 50 x's = 54 chars, truncated to 20 + " [truncated]"
+      expect(lines[0].text).toBe('You: ' + 'x'.repeat(15) + ' [truncated]');
+    });
+
+    it('should use default maxLineLength of 10000 when not specified', () => {
+      const cap = new OutputCapture();
+      cap.captureSession('alpha', session);
+
+      // Line of exactly 10000 chars should not be truncated
+      const exact = 'a'.repeat(10000);
+      session.emit('data', exact);
+      expect(cap.getLines('alpha')[0].text).toBe(exact);
+
+      // Line of 10001 chars should be truncated
+      const over = 'b'.repeat(10001);
+      session.emit('data', over);
+      expect(cap.getLines('alpha')[1].text).toBe('b'.repeat(10000) + ' [truncated]');
+    });
+
+    it('should not truncate when maxLineLength is Infinity (disabled)', () => {
+      const cap = new OutputCapture({ maxLineLength: Infinity });
+      cap.captureSession('alpha', session);
+
+      const longLine = 'z'.repeat(50000);
+      session.emit('data', longLine);
+
+      expect(cap.getLines('alpha')[0].text).toBe(longLine);
+    });
+
+    it('should not truncate when maxLineLength is 0 (treated as Infinity)', () => {
+      const cap = new OutputCapture({ maxLineLength: 0 });
+      cap.captureSession('alpha', session);
+
+      const longLine = 'z'.repeat(50000);
+      session.emit('data', longLine);
+
+      expect(cap.getLines('alpha')[0].text).toBe(longLine);
+    });
+  });
+
+  // ── Eviction warning logging ───────────────────────────────────────────
+
+  describe('eviction warning logging', () => {
+    it('should log a warning when global eviction occurs', () => {
+      const mockLogger = {
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+      } as unknown as Logger;
+
+      // Use two sessions so per-session cap does not interfere with global cap
+      const cap = new OutputCapture({ maxTotalLines: 3, maxLinesPerSession: 3 }, mockLogger);
+      const sessionA = createMockSession();
+      const sessionB = createMockSession();
+
+      cap.captureSession('a', sessionA);
+      cap.captureSession('b', sessionB);
+
+      sessionA.emit('data', 'a1');
+      sessionA.emit('data', 'a2');
+      sessionA.emit('data', 'a3');
+      // total = 3, at limit, no eviction yet
+      expect(mockLogger.warn).not.toHaveBeenCalled();
+
+      // Adding to session b triggers global eviction of 1 line from session a
+      sessionB.emit('data', 'b1');
+
+      expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('evicted 1 line(s)'),
+      );
+    });
+
+    it('should report the number of evicted lines in the warning', () => {
+      const mockLogger = {
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+      } as unknown as Logger;
+
+      const cap = new OutputCapture({ maxTotalLines: 2, maxLinesPerSession: 2 }, mockLogger);
+      const sessionA = createMockSession();
+      const sessionB = createMockSession();
+
+      cap.captureSession('a', sessionA);
+      cap.captureSession('b', sessionB);
+
+      sessionA.emit('data', 'a1');
+      sessionA.emit('data', 'a2');
+      // At limit, no eviction yet
+
+      // Add 2 lines to session b, should evict 2 lines total (one per appendLine call)
+      sessionB.emit('data', 'b1');
+      sessionB.emit('data', 'b2');
+
+      // Each appendLine that triggers eviction logs separately
+      expect(mockLogger.warn).toHaveBeenCalled();
+      // All warn calls should mention eviction
+      for (const call of (mockLogger.warn as ReturnType<typeof vi.fn>).mock.calls) {
+        expect(call[0]).toContain('evicted');
+        expect(call[0]).toContain('global limit of 2');
+      }
+    });
+
+    it('should log a warning when maxTotalLines is less than maxLinesPerSession', () => {
+      const mockLogger = {
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+      } as unknown as Logger;
+
+      // maxTotalLines (5) < maxLinesPerSession (10), should warn and clamp
+      new OutputCapture({ maxTotalLines: 5, maxLinesPerSession: 10 }, mockLogger);
+
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('maxTotalLines (5) is less than maxLinesPerSession (10)'),
+      );
+    });
+  });
+
+  // ── clearSession / clearAll with totalLineCount ────────────────────────
+
+  describe('clearSession and clearAll with totalLineCount tracking', () => {
+    it('should correctly decrement totalLineCount when clearing a session', () => {
+      const cap = new OutputCapture({ maxTotalLines: 6, maxLinesPerSession: 10 });
+      const sessionA = createMockSession();
+      const sessionB = createMockSession();
+
+      cap.captureSession('a', sessionA);
+      cap.captureSession('b', sessionB);
+
+      // Add 3 lines to each session (total = 6, at limit)
+      sessionA.emit('data', 'a1');
+      sessionA.emit('data', 'a2');
+      sessionA.emit('data', 'a3');
+      sessionB.emit('data', 'b1');
+      sessionB.emit('data', 'b2');
+      sessionB.emit('data', 'b3');
+
+      // Clear session a (should free 3 from totalLineCount)
+      cap.clearSession('a');
+      expect(cap.getLines('a')).toHaveLength(0);
+
+      // Now we can add 3 more lines to session b without triggering eviction
+      sessionB.emit('data', 'b4');
+      sessionB.emit('data', 'b5');
+      sessionB.emit('data', 'b6');
+
+      // session b should have all 6 lines (3 original + 3 new)
+      expect(cap.getLines('b')).toHaveLength(6);
+    });
+
+    it('should reset totalLineCount to 0 when clearing all sessions', () => {
+      const cap = new OutputCapture({ maxTotalLines: 4, maxLinesPerSession: 10 });
+      const sessionA = createMockSession();
+      const sessionB = createMockSession();
+
+      cap.captureSession('a', sessionA);
+      cap.captureSession('b', sessionB);
+
+      sessionA.emit('data', 'a1');
+      sessionA.emit('data', 'a2');
+      sessionB.emit('data', 'b1');
+      sessionB.emit('data', 'b2');
+      // total = 4, at limit
+
+      cap.clearAll();
+
+      // After clearing, we should be able to add 4 more lines without eviction
+      const sessionC = createMockSession();
+      cap.captureSession('c', sessionC);
+      sessionC.emit('data', 'c1');
+      sessionC.emit('data', 'c2');
+      sessionC.emit('data', 'c3');
+      sessionC.emit('data', 'c4');
+
+      expect(cap.getLines('c')).toHaveLength(4);
     });
   });
 });
