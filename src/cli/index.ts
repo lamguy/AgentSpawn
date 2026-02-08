@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { SessionManager } from '../core/manager.js';
 import { Router } from '../io/router.js';
 import { WorkspaceManager } from '../core/workspace.js';
+import { HistoryStore } from '../core/history.js';
 import { DEFAULT_CONFIG } from '../config/defaults.js';
 import { registerStartCommand } from './commands/start.js';
 import { registerStopCommand } from './commands/stop.js';
@@ -10,6 +11,7 @@ import { registerExecCommand } from './commands/exec.js';
 import { registerSwitchCommand } from './commands/switch.js';
 import { registerTUICommand } from './commands/tui.js';
 import { registerWorkspaceCommand } from './commands/workspace.js';
+import { registerHistoryCommand } from './commands/history.js';
 
 export const program: Command = new Command()
   .name('agentspawn')
@@ -17,9 +19,11 @@ export const program: Command = new Command()
   .description('Manage multiple Claude Code instances');
 
 export async function run(argv: string[]): Promise<void> {
+  const historyStore = new HistoryStore(DEFAULT_CONFIG.historyDir!);
   const manager = new SessionManager({
     registryPath: DEFAULT_CONFIG.registryPath,
     shutdownTimeoutMs: DEFAULT_CONFIG.shutdownTimeoutMs,
+    historyStore,
   });
   const router = new Router();
 
@@ -34,8 +38,9 @@ export async function run(argv: string[]): Promise<void> {
   registerListCommand(program, manager, router);
   registerExecCommand(program, manager, router);
   registerSwitchCommand(program, manager, router);
-  registerTUICommand(program, manager, router);
+  registerTUICommand(program, manager, router, historyStore);
   registerWorkspaceCommand(program, manager, router, workspaceManager);
+  registerHistoryCommand(program, manager, historyStore);
 
   await program.parseAsync(argv);
 }

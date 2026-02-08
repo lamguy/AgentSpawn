@@ -9,6 +9,7 @@ import {
 } from '../types.js';
 import { SessionAlreadyExistsError, SessionNotFoundError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
+import { HistoryStore } from './history.js';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -16,8 +17,10 @@ export class SessionManager {
   private sessions: Map<string, Session> = new Map();
   private registryEntries: Map<string, RegistryEntry> = new Map();
   readonly registry: Registry;
+  private readonly historyStore?: HistoryStore;
 
   constructor(private readonly options?: ManagerOptions) {
+    this.historyStore = options?.historyStore;
     let registryPath =
       options?.registryPath ?? path.join(os.homedir(), '.agentspawn', 'sessions.json');
 
@@ -91,6 +94,7 @@ export class SessionManager {
 
     this.sessions.set(config.name, session);
     this.registryEntries.set(config.name, entry);
+    this.wireHistoryRecording(session, config.name);
 
     return session;
   }
@@ -171,6 +175,30 @@ export class SessionManager {
     };
 
     return this.startSession(config, entry.claudeSessionId, entry.promptCount);
+  }
+
+  private wireHistoryRecording(session: Session, sessionName: string): void {
+    if (!this.historyStore) return;
+
+    const store = this.historyStore;
+    let pendingPrompt: string | null = null;
+
+    session.on('promptStart', (prompt: string) => {
+      pendingPrompt = prompt;
+    });
+
+    session.on('promptComplete', (response: string) => {
+      if (pendingPrompt) {
+        const prompt = pendingPrompt;
+        pendingPrompt = null;
+        store.record(sessionName, {
+          prompt,
+          responsePreview: response,
+        }).catch((err) => {
+          logger.warn(`Failed to record history for session "${sessionName}": ${err}`);
+        });
+      }
+    });
   }
 
   /**

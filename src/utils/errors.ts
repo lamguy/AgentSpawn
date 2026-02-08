@@ -77,6 +77,20 @@ export class WorkspaceLockError extends AgentSpawnError {
   }
 }
 
+export class HistoryNotFoundError extends AgentSpawnError {
+  constructor(sessionName: string) {
+    super(`History not found for session: ${sessionName}`, 'HISTORY_NOT_FOUND');
+    this.name = 'HistoryNotFoundError';
+  }
+}
+
+export class HistoryEntryNotFoundError extends AgentSpawnError {
+  constructor(sessionName: string, index: number) {
+    super(`History entry ${index} not found for session: ${sessionName}`, 'HISTORY_ENTRY_NOT_FOUND');
+    this.name = 'HistoryEntryNotFoundError';
+  }
+}
+
 export class PromptTimeoutError extends AgentSpawnError {
   constructor(
     public readonly sessionName: string,

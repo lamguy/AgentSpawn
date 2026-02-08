@@ -1,4 +1,4 @@
-import { SessionInfo, SessionState, WorkspaceEntry } from '../types.js';
+import { PromptHistoryEntry, SessionInfo, SessionState, WorkspaceEntry } from '../types.js';
 
 const GREEN = '\x1b[32m';
 const RED = '\x1b[31m';
@@ -114,4 +114,39 @@ export function formatWorkspaceTable(workspaces: WorkspaceEntry[]): string {
   });
 
   return [headerLine, ...bodyLines].join('\n');
+}
+
+export interface HistoryTableEntry extends PromptHistoryEntry {
+  sessionName?: string;
+}
+
+export function formatHistoryTable(entries: HistoryTableEntry[]): string {
+  if (entries.length === 0) {
+    return 'No history entries.';
+  }
+
+  const maxPromptWidth = Math.min(process.stdout.columns || 80, 80) - 30;
+
+  const lines: string[] = [];
+  for (const entry of entries) {
+    const time = formatRelativeDate(entry.timestamp);
+    const promptText =
+      entry.prompt.length > maxPromptWidth
+        ? entry.prompt.slice(0, maxPromptWidth - 3) + '...'
+        : entry.prompt;
+    const prefix = entry.sessionName
+      ? `  ${GRAY}[${entry.sessionName}]${RESET} #${entry.index}`
+      : `  #${entry.index}`;
+    const responseLine = entry.responsePreview
+      ? `${GRAY}${entry.responsePreview.slice(0, maxPromptWidth)}${RESET}`
+      : '';
+
+    lines.push(`${prefix}  ${GRAY}${time}${RESET}   "${promptText}"`);
+    if (responseLine) {
+      const indent = entry.sessionName ? '                  ' : '              ';
+      lines.push(`${indent}Response: ${responseLine}`);
+    }
+  }
+
+  return lines.join('\n');
 }

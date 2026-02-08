@@ -8,6 +8,7 @@ describe('validateConfig', () => {
     const input = {
       registryPath: '/custom/path.json',
       workspacesPath: '/custom/workspaces.json',
+      historyDir: '/custom/history',
       logLevel: 'debug',
       shutdownTimeoutMs: 10000,
     };
@@ -21,6 +22,7 @@ describe('validateConfig', () => {
     expect(result).toEqual({
       registryPath: '/my/registry.json',
       workspacesPath: DEFAULT_CONFIG.workspacesPath,
+      historyDir: DEFAULT_CONFIG.historyDir,
       logLevel: DEFAULT_CONFIG.logLevel,
       shutdownTimeoutMs: DEFAULT_CONFIG.shutdownTimeoutMs,
     });

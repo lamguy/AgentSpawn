@@ -13,6 +13,10 @@ export interface InputBarProps {
   isProcessing: boolean;
   /** Session name to display as prefix */
   sessionName?: string;
+  /** Pre-filled input text (e.g., from history search). Consumed once. */
+  pendingInput?: string | null;
+  /** Callback to clear pendingInput after consuming it */
+  onPendingInputConsumed?: () => void;
 }
 
 /**
@@ -38,9 +42,22 @@ export function InputBar({
   onSubmit,
   isProcessing,
   sessionName,
+  pendingInput,
+  onPendingInputConsumed,
 }: InputBarProps): React.ReactElement {
   const [inputText, setInputText] = useState('');
   const [cursorPos, setCursorPos] = useState(0);
+
+  // Consume pendingInput when it arrives
+  React.useEffect(() => {
+    if (pendingInput != null && pendingInput.length > 0) {
+      setInputText(pendingInput);
+      setCursorPos(pendingInput.length);
+      if (onPendingInputConsumed) {
+        onPendingInputConsumed();
+      }
+    }
+  }, [pendingInput, onPendingInputConsumed]);
 
   useInput(
     (input, key) => {

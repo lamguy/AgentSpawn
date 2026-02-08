@@ -1,4 +1,4 @@
-import type { SessionInfo } from '../types.js';
+import type { SessionInfo, PromptHistoryEntry } from '../types.js';
 
 /**
  * Base TUI interaction mode.
@@ -16,7 +16,8 @@ export type OverlayState =
   | HelpOverlayState
   | ActionMenuOverlayState
   | SessionCreationOverlayState
-  | ConfirmationOverlayState;
+  | ConfirmationOverlayState
+  | HistorySearchOverlayState;
 
 export interface HelpOverlayState {
   kind: 'help';
@@ -62,6 +63,14 @@ export interface ConfirmationOverlayState {
   action: ConfirmableAction;
 }
 
+export interface HistorySearchOverlayState {
+  kind: 'history-search';
+  query: string;
+  results: (PromptHistoryEntry & { sessionName: string })[];
+  selectedIndex: number;
+  isLoading: boolean;
+}
+
 /**
  * Actions that require user confirmation before execution.
  * Discriminated union so the orchestrator knows what to do on confirm.
@@ -91,7 +100,9 @@ export type TUIAction =
   | { kind: 'stop-session'; sessionName: string }
   | { kind: 'restart-session'; sessionName: string }
   | { kind: 'stop-all' }
-  | { kind: 'send-prompt'; sessionName: string; prompt: string };
+  | { kind: 'send-prompt'; sessionName: string; prompt: string }
+  | { kind: 'history-search-load'; sessionName: string | undefined; query: string }
+  | { kind: 'history-insert'; prompt: string };
 
 // ── Action Menu Item ────────────────────────────────────────────────────────
 
@@ -128,6 +139,8 @@ export interface TUIState {
   overlayStack: OverlayState[];
   /** Transient message to display in the status bar (auto-clears) */
   statusMessage: StatusMessage | null;
+  /** Pending input text to pre-fill in the InputBar (e.g., from history search) */
+  pendingInput?: string | null;
 }
 
 // ── Options ─────────────────────────────────────────────────────────────────

@@ -229,3 +229,4 @@ npm run lint         # Lint + format check
 | Registry    | On-disk JSON file tracking session metadata across CLI invocations|
 | Router      | The I/O multiplexer that connects terminal stdin/stdout to sessions|
 | Attached    | The currently active session receiving user input                 |
+| History     | Per-session NDJSON log of prompts and response previews           |

@@ -2,11 +2,12 @@ import { render } from 'ink';
 import React from 'react';
 import type { SessionManager } from '../core/manager.js';
 import { RegistryWatcher } from '../core/registry-watcher.js';
+import type { HistoryStore } from '../core/history.js';
 import type { Router } from '../io/router.js';
 import { logger } from '../utils/logger.js';
 import { SessionManagerAdapter, RouterAdapter } from './adapters.js';
 import { OutputCapture } from './output-capture.js';
-import type { TUIOptions, TUIState, TUIAction, StatusMessage } from './types.js';
+import type { TUIOptions, TUIState, TUIAction, StatusMessage, HistorySearchOverlayState } from './types.js';
 import { TUIApp } from './components/TUIApp.js';
 
 /** How long status messages persist before auto-clearing (ms). */
@@ -27,6 +28,7 @@ export class TUI {
     private readonly managerAdapter: SessionManagerAdapter,
     private readonly routerAdapter: RouterAdapter,
     private readonly outputCapture: OutputCapture,
+    private readonly historyStore: HistoryStore | null,
     private readonly options?: TUIOptions,
   ) {
     const attachedSessionName = routerAdapter.getActiveSession() ?? null;
@@ -190,6 +192,12 @@ export class TUI {
       case 'send-prompt':
         this.handleSendPrompt(action.sessionName, action.prompt);
         break;
+      case 'history-search-load':
+        this.handleHistorySearchLoad(action.sessionName, action.query);
+        break;
+      case 'history-insert':
+        this.handleHistoryInsert(action.prompt);
+        break;
     }
   }
 
@@ -298,6 +306,62 @@ export class TUI {
   }
 
   /**
+   * Handle history search: query the HistoryStore and update overlay results.
+   */
+  private async handleHistorySearchLoad(sessionName: string | undefined, query: string): Promise<void> {
+    if (!this.historyStore) {
+      // No history store available — clear loading state
+      const top = this.state.overlayStack[this.state.overlayStack.length - 1];
+      if (top?.kind === 'history-search') {
+        this.state.overlayStack = [
+          ...this.state.overlayStack.slice(0, -1),
+          { ...top, isLoading: false, results: [] },
+        ];
+      }
+      this.forceRerender();
+      return;
+    }
+
+    try {
+      const results = query.length > 0
+        ? await this.historyStore.search(query, { sessionName, limit: 50 })
+        : [];
+
+      const top = this.state.overlayStack[this.state.overlayStack.length - 1];
+      if (top?.kind === 'history-search') {
+        this.state.overlayStack = [
+          ...this.state.overlayStack.slice(0, -1),
+          {
+            ...top,
+            results,
+            isLoading: false,
+            selectedIndex: 0,
+          } satisfies HistorySearchOverlayState,
+        ];
+      }
+    } catch (err) {
+      logger.warn(`History search failed: ${err instanceof Error ? err.message : String(err)}`);
+      const top = this.state.overlayStack[this.state.overlayStack.length - 1];
+      if (top?.kind === 'history-search') {
+        this.state.overlayStack = [
+          ...this.state.overlayStack.slice(0, -1),
+          { ...top, isLoading: false, results: [] },
+        ];
+      }
+    }
+
+    this.forceRerender();
+  }
+
+  /**
+   * Handle history insert: set pendingInput so InputBar picks it up.
+   */
+  private handleHistoryInsert(prompt: string): void {
+    this.state.pendingInput = prompt;
+    this.forceRerender();
+  }
+
+  /**
    * Set a transient status message that auto-clears.
    */
   private setStatusMessage(text: string, level: StatusMessage['level']): void {
@@ -383,7 +447,7 @@ export class TUI {
 export function launchTUI(
   manager: SessionManager,
   router: Router,
-  options?: TUIOptions,
+  options?: TUIOptions & { historyStore?: HistoryStore },
 ): TUI {
   const managerAdapter = new SessionManagerAdapter(manager);
   const routerAdapter = new RouterAdapter(router);
@@ -400,6 +464,7 @@ export function launchTUI(
     managerAdapter,
     routerAdapter,
     outputCapture,
+    options?.historyStore ?? null,
     options,
   );
   tui.start();

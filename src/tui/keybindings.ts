@@ -6,6 +6,7 @@ import type {
   SessionCreationOverlayState,
   ConfirmationOverlayState,
   HelpOverlayState,
+  HistorySearchOverlayState,
   ActionMenuItem,
   ConfirmableAction,
 } from './types.js';
@@ -35,6 +36,7 @@ export const KEY_CODES = {
   LOWERCASE_X: 'x',
   LOWERCASE_Y: 'y',
   QUESTION_MARK: '?',
+  CTRL_R: '\x12',
 } as const;
 
 /**
@@ -220,6 +222,19 @@ export function handleAttachedKeypress(
       mode: 'navigation',
     });
   }
+
+  if (key === KEY_CODES.CTRL_R) {
+    return stateResult(
+      pushOverlay(state, {
+        kind: 'history-search',
+        query: '',
+        results: [],
+        selectedIndex: 0,
+        isLoading: false,
+      }),
+    );
+  }
+
   // All other keys are handled by InputBar, not by keybinding dispatch
   return stateResult(state);
 }
@@ -509,6 +524,87 @@ function confirmableActionToResult(
   }
 }
 
+// ── History search handler ───────────────────────────────────────────────────
+
+export function handleHistorySearchKeypress(
+  state: TUIState,
+  overlay: HistorySearchOverlayState,
+  key: string,
+): KeyHandlerResult {
+  switch (key) {
+    case KEY_CODES.ESCAPE:
+      return stateResult(popOverlay(state));
+
+    case KEY_CODES.UP_ARROW: {
+      const newIndex = Math.max(0, overlay.selectedIndex - 1);
+      return stateResult(
+        replaceTopOverlay(state, { ...overlay, selectedIndex: newIndex }),
+      );
+    }
+
+    case KEY_CODES.DOWN_ARROW: {
+      const newIndex = Math.min(
+        overlay.results.length - 1,
+        overlay.selectedIndex + 1,
+      );
+      return stateResult(
+        replaceTopOverlay(state, {
+          ...overlay,
+          selectedIndex: Math.max(0, newIndex),
+        }),
+      );
+    }
+
+    case KEY_CODES.ENTER: {
+      if (overlay.results.length === 0) return stateResult(state);
+      const selected = overlay.results[overlay.selectedIndex];
+      if (!selected) return stateResult(state);
+      const popped = popOverlay(state);
+      return actionResult(popped, {
+        kind: 'history-insert',
+        prompt: selected.prompt,
+      });
+    }
+
+    case KEY_CODES.BACKSPACE: {
+      if (overlay.query.length === 0) return stateResult(state);
+      const newQuery = overlay.query.slice(0, -1);
+      const sessionName = state.attachedSessionName ?? undefined;
+      const updated = replaceTopOverlay(state, {
+        ...overlay,
+        query: newQuery,
+        selectedIndex: 0,
+        isLoading: true,
+      });
+      return actionResult(updated, {
+        kind: 'history-search-load',
+        sessionName,
+        query: newQuery,
+      });
+    }
+
+    default: {
+      // Only accept printable single characters
+      if (key.length === 1 && key >= ' ' && key <= '~') {
+        const newQuery = overlay.query + key;
+        const sessionName = state.attachedSessionName ?? undefined;
+        const updated = replaceTopOverlay(state, {
+          ...overlay,
+          query: newQuery,
+          selectedIndex: 0,
+          isLoading: true,
+        });
+        return actionResult(updated, {
+          kind: 'history-search-load',
+          sessionName,
+          query: newQuery,
+        });
+      }
+      return stateResult(state);
+    }
+  }
+}
+
 // ── Overlay dispatch ─────────────────────────────────────────────────────────
 
 function handleOverlayKeypress(
@@ -525,6 +621,8 @@ function handleOverlayKeypress(
       return handleSessionCreationKeypress(state, overlay, key);
     case 'confirmation':
       return handleConfirmationKeypress(state, overlay, key);
+    case 'history-search':
+      return handleHistorySearchKeypress(state, overlay, key);
   }
 }
 

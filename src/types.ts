@@ -1,5 +1,6 @@
 import type { ChildProcess } from 'node:child_process';
 import type { Writable, Readable } from 'node:stream';
+import type { HistoryStore } from './core/history.js';
 
 export enum SessionState {
   Running = 'running',
@@ -54,6 +55,7 @@ export interface RegistryData {
 export interface ManagerOptions {
   registryPath?: string;
   shutdownTimeoutMs?: number;
+  historyStore?: HistoryStore;
 }
 
 export interface RouterOptions {
@@ -71,9 +73,17 @@ export interface WorkspaceData {
   workspaces: Record<string, WorkspaceEntry>;
 }
 
+export interface PromptHistoryEntry {
+  index: number;
+  prompt: string;
+  responsePreview: string;
+  timestamp: string;
+}
+
 export interface AgentSpawnConfig {
   registryPath: string;
   workspacesPath?: string;
+  historyDir?: string;
   logLevel: string;
   shutdownTimeoutMs: number;
 }

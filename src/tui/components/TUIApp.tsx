@@ -9,6 +9,7 @@ import { HelpOverlay } from './HelpOverlay.js';
 import { ActionMenu } from './ActionMenu.js';
 import { SessionCreationDialog } from './SessionCreationDialog.js';
 import { ConfirmationDialog } from './ConfirmationDialog.js';
+import { HistorySearchOverlay } from './HistorySearchOverlay.js';
 import { handleKeypress } from '../keybindings.js';
 import { topOverlay } from '../overlay-helpers.js';
 
@@ -81,6 +82,8 @@ export function TUIApp({
         keyCode = '\x03';
       } else if (key.ctrl && input === 'a') {
         keyCode = '\x01';
+      } else if (key.ctrl && input === 'r') {
+        keyCode = '\x12';
       } else if (key.delete || key.backspace) {
         keyCode = '\x7f';
       } else {
@@ -252,6 +255,15 @@ export function TUIApp({
             }}
           />
         );
+      case 'history-search':
+        return (
+          <HistorySearchOverlay
+            query={activeOverlay.query}
+            results={activeOverlay.results}
+            selectedIndex={activeOverlay.selectedIndex}
+            isLoading={activeOverlay.isLoading}
+          />
+        );
     }
   };
 
@@ -317,6 +329,10 @@ export function TUIApp({
           isActive={isAttached}
           isProcessing={isProcessing}
           sessionName={state.attachedSessionName}
+          pendingInput={state.pendingInput}
+          onPendingInputConsumed={() => {
+            setState((prev) => ({ ...prev, pendingInput: null }));
+          }}
           onSubmit={(text) => {
             if (state.attachedSessionName && onSendPrompt) {
               onSendPrompt(state.attachedSessionName, text);

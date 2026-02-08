@@ -7,6 +7,7 @@ import {
   handleActionMenuKeypress,
   handleSessionCreationKeypress,
   handleConfirmationKeypress,
+  handleHistorySearchKeypress,
   KEY_CODES,
 } from './keybindings.js';
 import type { KeyHandlerResult } from './keybindings.js';
@@ -17,6 +18,7 @@ import type {
   ActionMenuOverlayState,
   SessionCreationOverlayState,
   ConfirmationOverlayState,
+  HistorySearchOverlayState,
 } from './types.js';
 import { SessionState } from '../types.js';
 
@@ -749,5 +751,322 @@ describe('handleConfirmationKeypress', () => {
     );
     const { action } = expectAction(result);
     expect(action.kind).toBe('restart-session');
+  });
+});
+
+// ── Attached mode: Ctrl+R history search ────────────────────────────────────
+
+describe('handleAttachedKeypress — Ctrl+R', () => {
+  it('should push history-search overlay on Ctrl+R', () => {
+    const state = createMockState(['a']);
+    state.mode = 'attached';
+    state.attachedSessionName = 'a';
+    const s = expectState(handleAttachedKeypress(state, KEY_CODES.CTRL_R));
+    expect(s.overlayStack).toHaveLength(1);
+    expect(s.overlayStack[0].kind).toBe('history-search');
+    const overlay = s.overlayStack[0] as HistorySearchOverlayState;
+    expect(overlay.query).toBe('');
+    expect(overlay.results).toEqual([]);
+    expect(overlay.selectedIndex).toBe(0);
+    expect(overlay.isLoading).toBe(false);
+  });
+
+  it('should stay in attached mode after Ctrl+R', () => {
+    const state = createMockState(['a']);
+    state.mode = 'attached';
+    state.attachedSessionName = 'a';
+    const s = expectState(handleAttachedKeypress(state, KEY_CODES.CTRL_R));
+    expect(s.mode).toBe('attached');
+    expect(s.attachedSessionName).toBe('a');
+  });
+});
+
+// ── History search overlay ──────────────────────────────────────────────────
+
+describe('handleHistorySearchKeypress', () => {
+  function historySearchState(
+    overlayOverrides: Partial<HistorySearchOverlayState> = {},
+  ): { state: TUIState; overlay: HistorySearchOverlayState } {
+    const state = createMockState(['session-a']);
+    state.mode = 'attached';
+    state.attachedSessionName = 'session-a';
+    const overlay: HistorySearchOverlayState = {
+      kind: 'history-search',
+      query: '',
+      results: [],
+      selectedIndex: 0,
+      isLoading: false,
+      ...overlayOverrides,
+    };
+    state.overlayStack = [overlay];
+    return { state, overlay };
+  }
+
+  describe('Escape', () => {
+    it('should close the overlay on Escape', () => {
+      const { state, overlay } = historySearchState();
+      const s = expectState(
+        handleHistorySearchKeypress(state, overlay, KEY_CODES.ESCAPE),
+      );
+      expect(s.overlayStack).toHaveLength(0);
+    });
+  });
+
+  describe('Up/Down navigation', () => {
+    it('should move selection up on Up arrow', () => {
+      const results = [
+        { index: 0, prompt: 'a', responsePreview: '', timestamp: '', sessionName: 's' },
+        { index: 1, prompt: 'b', responsePreview: '', timestamp: '', sessionName: 's' },
+      ];
+      const { state, overlay } = historySearchState({
+        results,
+        selectedIndex: 1,
+      });
+      const s = expectState(
+        handleHistorySearchKeypress(state, overlay, KEY_CODES.UP_ARROW),
+      );
+      const updated = s.overlayStack[0] as HistorySearchOverlayState;
+      expect(updated.selectedIndex).toBe(0);
+    });
+
+    it('should clamp at 0 when pressing Up at top', () => {
+      const results = [
+        { index: 0, prompt: 'a', responsePreview: '', timestamp: '', sessionName: 's' },
+      ];
+      const { state, overlay } = historySearchState({
+        results,
+        selectedIndex: 0,
+      });
+      const s = expectState(
+        handleHistorySearchKeypress(state, overlay, KEY_CODES.UP_ARROW),
+      );
+      const updated = s.overlayStack[0] as HistorySearchOverlayState;
+      expect(updated.selectedIndex).toBe(0);
+    });
+
+    it('should move selection down on Down arrow', () => {
+      const results = [
+        { index: 0, prompt: 'a', responsePreview: '', timestamp: '', sessionName: 's' },
+        { index: 1, prompt: 'b', responsePreview: '', timestamp: '', sessionName: 's' },
+        { index: 2, prompt: 'c', responsePreview: '', timestamp: '', sessionName: 's' },
+      ];
+      const { state, overlay } = historySearchState({
+        results,
+        selectedIndex: 0,
+      });
+      const s = expectState(
+        handleHistorySearchKeypress(state, overlay, KEY_CODES.DOWN_ARROW),
+      );
+      const updated = s.overlayStack[0] as HistorySearchOverlayState;
+      expect(updated.selectedIndex).toBe(1);
+    });
+
+    it('should clamp at last index when pressing Down at bottom', () => {
+      const results = [
+        { index: 0, prompt: 'a', responsePreview: '', timestamp: '', sessionName: 's' },
+        { index: 1, prompt: 'b', responsePreview: '', timestamp: '', sessionName: 's' },
+      ];
+      const { state, overlay } = historySearchState({
+        results,
+        selectedIndex: 1,
+      });
+      const s = expectState(
+        handleHistorySearchKeypress(state, overlay, KEY_CODES.DOWN_ARROW),
+      );
+      const updated = s.overlayStack[0] as HistorySearchOverlayState;
+      expect(updated.selectedIndex).toBe(1);
+    });
+
+    it('should handle Down with empty results (selectedIndex stays 0)', () => {
+      const { state, overlay } = historySearchState({ results: [] });
+      const s = expectState(
+        handleHistorySearchKeypress(state, overlay, KEY_CODES.DOWN_ARROW),
+      );
+      const updated = s.overlayStack[0] as HistorySearchOverlayState;
+      expect(updated.selectedIndex).toBe(0);
+    });
+  });
+
+  describe('Enter (select)', () => {
+    it('should select the current result and produce history-insert action', () => {
+      const results = [
+        { index: 0, prompt: 'fix the bug', responsePreview: '', timestamp: '', sessionName: 's' },
+        { index: 1, prompt: 'add tests', responsePreview: '', timestamp: '', sessionName: 's' },
+      ];
+      const { state, overlay } = historySearchState({
+        results,
+        selectedIndex: 1,
+      });
+      const result = handleHistorySearchKeypress(
+        state,
+        overlay,
+        KEY_CODES.ENTER,
+      );
+      const { state: s, action } = expectAction(result);
+      // Overlay should be popped
+      expect(s.overlayStack).toHaveLength(0);
+      expect(action.kind).toBe('history-insert');
+      if (action.kind === 'history-insert') {
+        expect(action.prompt).toBe('add tests');
+      }
+    });
+
+    it('should not produce action when results are empty', () => {
+      const { state, overlay } = historySearchState({ results: [] });
+      const result = handleHistorySearchKeypress(
+        state,
+        overlay,
+        KEY_CODES.ENTER,
+      );
+      // Should be a state result (no-op), not an action
+      const s = expectState(result);
+      expect(s.overlayStack).toHaveLength(1);
+    });
+  });
+
+  describe('Backspace', () => {
+    it('should remove the last character and produce history-search-load action', () => {
+      const { state, overlay } = historySearchState({ query: 'fix' });
+      const result = handleHistorySearchKeypress(
+        state,
+        overlay,
+        KEY_CODES.BACKSPACE,
+      );
+      const { state: s, action } = expectAction(result);
+      const updated = s.overlayStack[0] as HistorySearchOverlayState;
+      expect(updated.query).toBe('fi');
+      expect(updated.selectedIndex).toBe(0);
+      expect(updated.isLoading).toBe(true);
+      expect(action.kind).toBe('history-search-load');
+      if (action.kind === 'history-search-load') {
+        expect(action.query).toBe('fi');
+        expect(action.sessionName).toBe('session-a');
+      }
+    });
+
+    it('should be a no-op when query is already empty', () => {
+      const { state, overlay } = historySearchState({ query: '' });
+      const result = handleHistorySearchKeypress(
+        state,
+        overlay,
+        KEY_CODES.BACKSPACE,
+      );
+      const s = expectState(result);
+      // Should not change state
+      expect(s).toEqual(state);
+    });
+  });
+
+  describe('Character input', () => {
+    it('should append character and produce history-search-load action', () => {
+      const { state, overlay } = historySearchState({ query: 'fi' });
+      const result = handleHistorySearchKeypress(state, overlay, 'x');
+      const { state: s, action } = expectAction(result);
+      const updated = s.overlayStack[0] as HistorySearchOverlayState;
+      expect(updated.query).toBe('fix');
+      expect(updated.selectedIndex).toBe(0);
+      expect(updated.isLoading).toBe(true);
+      expect(action.kind).toBe('history-search-load');
+      if (action.kind === 'history-search-load') {
+        expect(action.query).toBe('fix');
+        expect(action.sessionName).toBe('session-a');
+      }
+    });
+
+    it('should start from empty query', () => {
+      const { state, overlay } = historySearchState({ query: '' });
+      const result = handleHistorySearchKeypress(state, overlay, 'a');
+      const { state: s, action } = expectAction(result);
+      const updated = s.overlayStack[0] as HistorySearchOverlayState;
+      expect(updated.query).toBe('a');
+      expect(action.kind).toBe('history-search-load');
+    });
+
+    it('should use attachedSessionName for sessionName in action', () => {
+      const { state, overlay } = historySearchState({ query: '' });
+      state.attachedSessionName = 'my-attached';
+      const result = handleHistorySearchKeypress(state, overlay, 'a');
+      const { action } = expectAction(result);
+      if (action.kind === 'history-search-load') {
+        expect(action.sessionName).toBe('my-attached');
+      }
+    });
+
+    it('should use undefined for sessionName when not attached', () => {
+      const { state, overlay } = historySearchState({ query: '' });
+      state.attachedSessionName = null;
+      const result = handleHistorySearchKeypress(state, overlay, 'a');
+      const { action } = expectAction(result);
+      if (action.kind === 'history-search-load') {
+        expect(action.sessionName).toBeUndefined();
+      }
+    });
+
+    it('should ignore non-printable characters', () => {
+      const { state, overlay } = historySearchState({ query: 'test' });
+      const result = handleHistorySearchKeypress(state, overlay, '\x1b[A');
+      const s = expectState(result);
+      const updated = s.overlayStack[0] as HistorySearchOverlayState;
+      expect(updated.query).toBe('test');
+    });
+
+    it('should reset selectedIndex to 0 on new character input', () => {
+      const results = [
+        { index: 0, prompt: 'a', responsePreview: '', timestamp: '', sessionName: 's' },
+        { index: 1, prompt: 'b', responsePreview: '', timestamp: '', sessionName: 's' },
+      ];
+      const { state, overlay } = historySearchState({
+        query: 'te',
+        results,
+        selectedIndex: 1,
+      });
+      const result = handleHistorySearchKeypress(state, overlay, 's');
+      const { state: s } = expectAction(result);
+      const updated = s.overlayStack[0] as HistorySearchOverlayState;
+      expect(updated.selectedIndex).toBe(0);
+    });
+  });
+
+  describe('integration with handleKeypress dispatch', () => {
+    it('should route to history search handler when overlay is active', () => {
+      const state = createMockState(['a']);
+      state.mode = 'attached';
+      state.attachedSessionName = 'a';
+      state.overlayStack = [
+        {
+          kind: 'history-search',
+          query: 'test',
+          results: [
+            { index: 0, prompt: 'test match', responsePreview: '', timestamp: '', sessionName: 'a' },
+          ],
+          selectedIndex: 0,
+          isLoading: false,
+        },
+      ];
+
+      // Enter should select and produce history-insert action
+      const result = handleKeypress(state, KEY_CODES.ENTER);
+      const { action } = expectAction(result);
+      expect(action.kind).toBe('history-insert');
+    });
+
+    it('should route Escape to close history search overlay', () => {
+      const state = createMockState(['a']);
+      state.mode = 'attached';
+      state.attachedSessionName = 'a';
+      state.overlayStack = [
+        {
+          kind: 'history-search',
+          query: '',
+          results: [],
+          selectedIndex: 0,
+          isLoading: false,
+        },
+      ];
+
+      const result = handleKeypress(state, KEY_CODES.ESCAPE);
+      const s = expectState(result);
+      expect(s.overlayStack).toHaveLength(0);
+    });
   });
 });

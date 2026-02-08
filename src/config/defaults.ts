@@ -5,6 +5,7 @@ import { AgentSpawnConfig } from '../types.js';
 export const DEFAULT_CONFIG: AgentSpawnConfig = {
   registryPath: '~/.agentspawn/sessions.json',
   workspacesPath: path.join(os.homedir(), '.agentspawn', 'workspaces.json'),
+  historyDir: path.join(os.homedir(), '.agentspawn', 'history'),
   logLevel: 'info',
   shutdownTimeoutMs: 5000,
 };

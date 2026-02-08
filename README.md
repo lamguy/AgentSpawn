@@ -22,10 +22,10 @@ Manage multiple Claude Code instances from a single terminal. Start, stop, switc
   <img src="docs/screenshots/cli-help.gif" alt="agentspawn --help" width="700">
 </p>
 
-### Test Suite (381 tests)
+### Test Suite (466 tests)
 
 <p align="center">
-  <img src="docs/screenshots/tests.gif" alt="Test suite — 381 tests passing" width="700">
+  <img src="docs/screenshots/tests.gif" alt="Test suite — 466 tests passing" width="700">
 </p>
 
 ## Install
@@ -61,6 +61,7 @@ Then use keyboard shortcuts to manage sessions:
 | `Tab` / `j`/`k` | Navigate between sessions |
 | `x` | Stop selected session |
 | `:` | Open action menu |
+| `Ctrl+R` | Search prompt history (attached mode) |
 | `?` | Show help |
 | `q` | Quit |
 
@@ -92,6 +93,16 @@ agentspawn workspace remove my-project db        # Remove a session from workspa
 agentspawn workspace delete my-project           # Delete the workspace
 ```
 
+### Prompt History
+
+```bash
+agentspawn history my-session                   # Show prompt history for a session
+agentspawn history my-session --limit 10        # Limit to last 10 entries
+agentspawn history --search "fix bug"           # Search across all sessions
+agentspawn history my-session --search "auth"   # Search within a session
+agentspawn replay my-session 5                  # Replay prompt #5 from history
+```
+
 ## Commands
 
 | Command | Description |
@@ -103,6 +114,8 @@ agentspawn workspace delete my-project           # Delete the workspace
 | `agentspawn exec <name> <cmd>` | Send a prompt to a session |
 | `agentspawn switch <name>` | Attach to a session (interactive prompt mode) |
 | `agentspawn workspace <cmd>` | Manage session workspaces (create, add, remove, list, switch, delete) |
+| `agentspawn history [session]` | Show prompt history, search across sessions |
+| `agentspawn replay <session> <index>` | Replay a prompt from history |
 
 Every command supports `--help` for detailed usage.
 
@@ -113,6 +126,8 @@ Every command supports `--help` for detailed usage.
 - **Prompt-based sessions** — uses `claude --print` per prompt, keeping the TUI in control at all times
 - **Conversation persistence** — session IDs and prompt counts survive TUI restarts
 - **Workspaces** — group related sessions into named workspaces for batch management
+- **Prompt history** — persistent per-session prompt history with search and replay
+- **History search overlay** — Ctrl+R in attached mode for interactive history search
 - **Cross-process discovery** — event-based registry watching to discover sessions started by other processes
 - **Persistent registry** — session state persists via `~/.agentspawn/sessions.json` with file locking
 - **Prompt timeout** — configurable timeout for hung Claude processes (default 5 min)
@@ -147,7 +162,7 @@ node dist/index.js tui # Launch the TUI
 ### Test
 
 ```bash
-npm test               # Run all 381 tests (mocked — no real Claude needed)
+npm test               # Run all 466 tests (mocked — no real Claude needed)
 ```
 
 ### Lint & Format
@@ -164,7 +179,7 @@ npm run typecheck      # TypeScript strict mode type checking
 ```
 src/
   cli/              Command definitions and argument parsing
-    commands/       start, stop, list, exec, switch, tui, workspace
+    commands/       start, stop, list, exec, switch, tui, workspace, history
     index.ts        CLI entry point
   core/             Session lifecycle management
     session.ts      Prompt-based sessions using claude --print
@@ -172,6 +187,7 @@ src/
     registry.ts     JSON file persistence with file locking
     registry-watcher.ts  Event-based registry file watching
     workspace.ts    Workspace management (session grouping)
+    history.ts      Per-session prompt history (NDJSON storage)
   io/               I/O multiplexing
     router.ts       Attaches/detaches terminal I/O to sessions
     formatter.ts    ANSI colored output, session table formatting
