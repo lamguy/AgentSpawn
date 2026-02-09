@@ -1,4 +1,4 @@
-import { PromptHistoryEntry, SessionInfo, SessionState, TemplateEntry, WorkspaceEntry } from '../types.js';
+import { BroadcastResult, PromptHistoryEntry, SessionInfo, SessionState, TemplateEntry, WorkspaceEntry } from '../types.js';
 
 const GREEN = '\x1b[32m';
 const RED = '\x1b[31m';
@@ -179,6 +179,32 @@ export function formatHistoryTable(entries: HistoryTableEntry[]): string {
       lines.push(`${indent}Response: ${responseLine}`);
     }
   }
+
+  return lines.join('\n');
+}
+
+export function formatBroadcastResults(results: BroadcastResult[]): string {
+  const lines: string[] = [];
+  let succeeded = 0;
+  let failed = 0;
+
+  for (const result of results) {
+    if (result.status === 'fulfilled') {
+      succeeded++;
+      const preview = result.response
+        ? result.response.length > 200
+          ? result.response.slice(0, 200) + '...'
+          : result.response
+        : '';
+      lines.push(`${GREEN}[${result.sessionName}] OK:${RESET} ${preview}`);
+    } else {
+      failed++;
+      lines.push(`${RED}[${result.sessionName}] FAILED: ${result.error ?? 'Unknown error'}${RESET}`);
+    }
+  }
+
+  lines.push('');
+  lines.push(`Broadcast complete: ${succeeded} succeeded, ${failed} failed`);
 
   return lines.join('\n');
 }

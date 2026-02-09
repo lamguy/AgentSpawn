@@ -75,6 +75,8 @@ agentspawn start project-b --dir ~/work   # Start with a working directory
 agentspawn list                           # See all sessions
 agentspawn list --json                    # Machine-readable JSON output
 agentspawn exec project-a "fix the bug"   # Send a prompt to a session
+agentspawn exec --all "update deps"       # Broadcast to all running sessions
+agentspawn exec --group my-ws "run tests" # Broadcast to a workspace
 agentspawn stop project-a                 # Stop a session
 agentspawn stop --all                     # Stop everything
 ```
@@ -130,7 +132,7 @@ agentspawn replay my-session 5                  # Replay prompt #5 from history
 | `agentspawn start <name>` | Start a new Claude Code session |
 | `agentspawn stop [name]` | Stop a session (or `--all` to stop everything) |
 | `agentspawn list` | Show all sessions with status |
-| `agentspawn exec <name> <cmd>` | Send a prompt to a session |
+| `agentspawn exec <name> <cmd>` | Send a prompt to a session (`--all` for all running, `--group <ws>` for a workspace) |
 | `agentspawn switch <name>` | Attach to a session (interactive prompt mode) |
 | `agentspawn workspace <cmd>` | Manage session workspaces (create, add, remove, list, switch, delete) |
 | `agentspawn template <cmd>` | Manage session templates (create, list, show, delete) |

@@ -10,8 +10,9 @@ export { WorkspaceManager } from './core/workspace.js';
 export { TemplateManager } from './core/template.js';
 export { HistoryStore } from './core/history.js';
 export { Router } from './io/router.js';
+export { SessionState } from './types.js';
 export type {
-  SessionState,
+  BroadcastResult,
   SessionConfig,
   SessionInfo,
   SessionHandle,

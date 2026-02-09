@@ -1,6 +1,7 @@
 import { Session } from './session.js';
 import { Registry } from './registry.js';
 import {
+  BroadcastResult,
   SessionConfig,
   SessionInfo,
   SessionState,
@@ -264,6 +265,43 @@ export class SessionManager {
         this.registryEntries.delete(name);
       }
     }
+  }
+
+  /**
+   * Send a prompt to multiple sessions concurrently and collect results.
+   * Uses Promise.allSettled so that a failure in one session never prevents
+   * the others from completing.
+   */
+  async broadcastPrompt(sessionNames: string[], prompt: string): Promise<BroadcastResult[]> {
+    const promises = sessionNames.map(async (name): Promise<BroadcastResult> => {
+      const session = this.sessions.get(name);
+      if (!session || session.getState() !== SessionState.Running) {
+        return {
+          sessionName: name,
+          status: 'rejected',
+          error: session ? `Session '${name}' is not running` : `Session '${name}' not found`,
+        };
+      }
+
+      const response = await session.sendPrompt(prompt);
+      return {
+        sessionName: name,
+        status: 'fulfilled',
+        response,
+      };
+    });
+
+    const settled = await Promise.allSettled(promises);
+    return settled.map((result, i) => {
+      if (result.status === 'fulfilled') {
+        return result.value;
+      }
+      return {
+        sessionName: sessionNames[i],
+        status: 'rejected' as const,
+        error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+      };
+    });
   }
 
   listSessions(): SessionInfo[] {

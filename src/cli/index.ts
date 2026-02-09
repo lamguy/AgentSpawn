@@ -42,7 +42,7 @@ export async function run(argv: string[]): Promise<void> {
   registerStartCommand(program, manager, router, templateManager);
   registerStopCommand(program, manager, router);
   registerListCommand(program, manager, router);
-  registerExecCommand(program, manager, router);
+  registerExecCommand(program, manager, router, workspaceManager);
   registerSwitchCommand(program, manager, router);
   registerTUICommand(program, manager, router, historyStore, templateManager);
   registerWorkspaceCommand(program, manager, router, workspaceManager);

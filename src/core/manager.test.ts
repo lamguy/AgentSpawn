@@ -547,4 +547,108 @@ describe('SessionManager', () => {
       expect(manager.listSessions()).toHaveLength(0);
     });
   });
+
+  describe('broadcastPrompt()', () => {
+    it('should send prompt to all listed sessions concurrently', async () => {
+      await manager.init();
+      const sessionA = await manager.startSession({ name: 'a', workingDirectory: '/tmp/a' });
+      const sessionB = await manager.startSession({ name: 'b', workingDirectory: '/tmp/b' });
+
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      // Mock sendPrompt on both sessions to resolve immediately
+      const sendA = vi.spyOn(sessionA, 'sendPrompt').mockResolvedValue('response-a');
+      const sendB = vi.spyOn(sessionB, 'sendPrompt').mockResolvedValue('response-b');
+
+      const results = await manager.broadcastPrompt(['a', 'b'], 'hello');
+
+      expect(sendA).toHaveBeenCalledWith('hello');
+      expect(sendB).toHaveBeenCalledWith('hello');
+      expect(results).toHaveLength(2);
+      expect(results).toEqual(
+        expect.arrayContaining([
+          { sessionName: 'a', status: 'fulfilled', response: 'response-a' },
+          { sessionName: 'b', status: 'fulfilled', response: 'response-b' },
+        ]),
+      );
+    });
+
+    it('should return rejected result for sessions not found', async () => {
+      await manager.init();
+
+      const results = await manager.broadcastPrompt(['nonexistent'], 'hello');
+
+      expect(results).toHaveLength(1);
+      expect(results[0]).toEqual({
+        sessionName: 'nonexistent',
+        status: 'rejected',
+        error: "Session 'nonexistent' not found",
+      });
+    });
+
+    it('should return rejected result for sessions not running', async () => {
+      await manager.init();
+      const session = await manager.startSession({ name: 'stopped-one', workingDirectory: '/tmp/s' });
+      await session.stop();
+
+      const results = await manager.broadcastPrompt(['stopped-one'], 'hello');
+
+      expect(results).toHaveLength(1);
+      expect(results[0]).toEqual({
+        sessionName: 'stopped-one',
+        status: 'rejected',
+        error: "Session 'stopped-one' is not running",
+      });
+    });
+
+    it('should return rejected result for sessions that throw during sendPrompt', async () => {
+      await manager.init();
+      const session = await manager.startSession({ name: 'error-session', workingDirectory: '/tmp/e' });
+
+      vi.spyOn(session, 'sendPrompt').mockRejectedValue(new Error('Claude crashed'));
+
+      const results = await manager.broadcastPrompt(['error-session'], 'hello');
+
+      expect(results).toHaveLength(1);
+      expect(results[0]).toEqual({
+        sessionName: 'error-session',
+        status: 'rejected',
+        error: 'Claude crashed',
+      });
+    });
+
+    it('should return empty results for empty session array', async () => {
+      await manager.init();
+
+      const results = await manager.broadcastPrompt([], 'hello');
+
+      expect(results).toEqual([]);
+    });
+
+    it('should handle mixed success and failure across sessions', async () => {
+      await manager.init();
+      const sessionOk = await manager.startSession({ name: 'ok', workingDirectory: '/tmp/ok' });
+      const sessionFail = await manager.startSession({ name: 'fail', workingDirectory: '/tmp/fail' });
+
+      vi.spyOn(sessionOk, 'sendPrompt').mockResolvedValue('success');
+      vi.spyOn(sessionFail, 'sendPrompt').mockRejectedValue(new Error('boom'));
+
+      const results = await manager.broadcastPrompt(['ok', 'fail', 'ghost'], 'test');
+
+      expect(results).toHaveLength(3);
+
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      const rejected = results.filter((r) => r.status === 'rejected');
+
+      expect(fulfilled).toHaveLength(1);
+      expect(fulfilled[0].sessionName).toBe('ok');
+      expect(fulfilled[0].response).toBe('success');
+
+      expect(rejected).toHaveLength(2);
+      const rejectedNames = rejected.map((r) => r.sessionName).sort();
+      expect(rejectedNames).toEqual(['fail', 'ghost']);
+    });
+  });
 });

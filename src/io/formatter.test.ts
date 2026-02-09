@@ -8,8 +8,9 @@ import {
   formatSessionsSummary,
   formatRelativeDate,
   formatTemplateTable,
+  formatBroadcastResults,
 } from './formatter.js';
-import { SessionState, WorkspaceEntry, TemplateEntry } from '../types.js';
+import { BroadcastResult, SessionState, WorkspaceEntry, TemplateEntry } from '../types.js';
 
 describe('Formatter', () => {
   it('formatSessionOutput prefixes with session name', () => {
@@ -277,5 +278,76 @@ describe('formatRelativeDate', () => {
     // Should be a locale date string, not "Xd ago"
     expect(result).not.toContain('d ago');
     expect(result).not.toContain('just now');
+  });
+});
+
+describe('formatBroadcastResults', () => {
+  it('should format mixed success and failure results', () => {
+    const results: BroadcastResult[] = [
+      { sessionName: 'alpha', status: 'fulfilled', response: 'Done' },
+      { sessionName: 'beta', status: 'rejected', error: 'Session not found' },
+    ];
+
+    const output = formatBroadcastResults(results);
+
+    expect(output).toContain('[alpha] OK: Done');
+    expect(output).toContain('[beta] FAILED: Session not found');
+    expect(output).toContain('Broadcast complete: 1 succeeded, 1 failed');
+  });
+
+  it('should format all-success results', () => {
+    const results: BroadcastResult[] = [
+      { sessionName: 'a', status: 'fulfilled', response: 'OK from a' },
+      { sessionName: 'b', status: 'fulfilled', response: 'OK from b' },
+      { sessionName: 'c', status: 'fulfilled', response: 'OK from c' },
+    ];
+
+    const output = formatBroadcastResults(results);
+
+    expect(output).toContain('[a] OK: OK from a');
+    expect(output).toContain('[b] OK: OK from b');
+    expect(output).toContain('[c] OK: OK from c');
+    expect(output).toContain('Broadcast complete: 3 succeeded, 0 failed');
+  });
+
+  it('should format empty results array', () => {
+    const output = formatBroadcastResults([]);
+
+    expect(output).toContain('Broadcast complete: 0 succeeded, 0 failed');
+  });
+
+  it('should truncate long responses to 200 characters', () => {
+    const longResponse = 'x'.repeat(300);
+    const results: BroadcastResult[] = [
+      { sessionName: 'verbose', status: 'fulfilled', response: longResponse },
+    ];
+
+    const output = formatBroadcastResults(results);
+
+    // The preview should be truncated to 200 chars + "..."
+    expect(output).toContain('x'.repeat(200) + '...');
+    expect(output).not.toContain('x'.repeat(201));
+  });
+
+  it('should show "Unknown error" when rejected result has no error message', () => {
+    const results: BroadcastResult[] = [
+      { sessionName: 'mystery', status: 'rejected' },
+    ];
+
+    const output = formatBroadcastResults(results);
+
+    expect(output).toContain('[mystery] FAILED: Unknown error');
+    expect(output).toContain('Broadcast complete: 0 succeeded, 1 failed');
+  });
+
+  it('should handle fulfilled result with empty response', () => {
+    const results: BroadcastResult[] = [
+      { sessionName: 'empty', status: 'fulfilled', response: '' },
+    ];
+
+    const output = formatBroadcastResults(results);
+
+    expect(output).toContain('[empty] OK: ');
+    expect(output).toContain('Broadcast complete: 1 succeeded, 0 failed');
   });
 });

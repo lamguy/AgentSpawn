@@ -99,6 +99,13 @@ export interface TemplateData {
   templates: Record<string, TemplateEntry>;
 }
 
+export interface BroadcastResult {
+  sessionName: string;
+  status: 'fulfilled' | 'rejected';
+  response?: string;
+  error?: string;
+}
+
 export interface AgentSpawnConfig {
   registryPath: string;
   workspacesPath?: string;
