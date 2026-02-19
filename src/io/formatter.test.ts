@@ -12,6 +12,14 @@ import {
 } from './formatter.js';
 import { BroadcastResult, SessionState, WorkspaceEntry, TemplateEntry } from '../types.js';
 
+/**
+ * Strip ANSI color codes from a string for testing purposes
+ */
+function stripAnsi(str: string): string {
+  // eslint-disable-next-line no-control-regex
+  return str.replace(/\x1b\[[0-9;]*m/g, '');
+}
+
 describe('Formatter', () => {
   it('formatSessionOutput prefixes with session name', () => {
     const result = formatSessionOutput('agent-1', 'hello world');
@@ -289,10 +297,11 @@ describe('formatBroadcastResults', () => {
     ];
 
     const output = formatBroadcastResults(results);
+    const stripped = stripAnsi(output);
 
-    expect(output).toContain('[alpha] OK: Done');
-    expect(output).toContain('[beta] FAILED: Session not found');
-    expect(output).toContain('Broadcast complete: 1 succeeded, 1 failed');
+    expect(stripped).toContain('[alpha] OK: Done');
+    expect(stripped).toContain('[beta] FAILED: Session not found');
+    expect(stripped).toContain('Broadcast complete: 1 succeeded, 1 failed');
   });
 
   it('should format all-success results', () => {
@@ -303,11 +312,12 @@ describe('formatBroadcastResults', () => {
     ];
 
     const output = formatBroadcastResults(results);
+    const stripped = stripAnsi(output);
 
-    expect(output).toContain('[a] OK: OK from a');
-    expect(output).toContain('[b] OK: OK from b');
-    expect(output).toContain('[c] OK: OK from c');
-    expect(output).toContain('Broadcast complete: 3 succeeded, 0 failed');
+    expect(stripped).toContain('[a] OK: OK from a');
+    expect(stripped).toContain('[b] OK: OK from b');
+    expect(stripped).toContain('[c] OK: OK from c');
+    expect(stripped).toContain('Broadcast complete: 3 succeeded, 0 failed');
   });
 
   it('should format empty results array', () => {
@@ -346,8 +356,9 @@ describe('formatBroadcastResults', () => {
     ];
 
     const output = formatBroadcastResults(results);
+    const stripped = stripAnsi(output);
 
-    expect(output).toContain('[empty] OK: ');
-    expect(output).toContain('Broadcast complete: 1 succeeded, 0 failed');
+    expect(stripped).toContain('[empty] OK: ');
+    expect(stripped).toContain('Broadcast complete: 1 succeeded, 0 failed');
   });
 });

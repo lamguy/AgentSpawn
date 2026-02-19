@@ -7,20 +7,25 @@ import {
   SessionState,
   ManagerOptions,
   RegistryEntry,
+  SessionCrashedEvent,
 } from '../types.js';
 import { SessionAlreadyExistsError, SessionNotFoundError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 import { HistoryStore } from './history.js';
+import { calculateBackoff } from './restart-policy.js';
+import { EventEmitter } from 'node:events';
 import os from 'node:os';
 import path from 'node:path';
 
-export class SessionManager {
+export class SessionManager extends EventEmitter {
   private sessions: Map<string, Session> = new Map();
   private registryEntries: Map<string, RegistryEntry> = new Map();
   readonly registry: Registry;
   private readonly historyStore?: HistoryStore;
+  private pendingRestarts: Map<string, NodeJS.Timeout> = new Map();
 
   constructor(private readonly options?: ManagerOptions) {
+    super();
     this.historyStore = options?.historyStore;
     let registryPath =
       options?.registryPath ?? path.join(os.homedir(), '.agentspawn', 'sessions.json');
@@ -59,12 +64,17 @@ export class SessionManager {
     }
   }
 
-  async startSession(config: SessionConfig, claudeSessionId?: string, promptCount?: number): Promise<Session> {
+  async startSession(
+    config: SessionConfig,
+    claudeSessionId?: string,
+    promptCount?: number,
+    retryCount?: number,
+  ): Promise<Session> {
     if (this.sessions.has(config.name)) {
       throw new SessionAlreadyExistsError(config.name);
     }
 
-    const session = new Session(config, this.options?.shutdownTimeoutMs, claudeSessionId, promptCount);
+    const session = new Session(config, this.options?.shutdownTimeoutMs, claudeSessionId, promptCount, retryCount);
     await session.start();
     logger.info(`Session "${config.name}" started in ${config.workingDirectory}`);
 
@@ -79,6 +89,7 @@ export class SessionManager {
       claudeSessionId: session.getSessionId(),
       promptCount: info.promptCount,
       permissionMode: config.permissionMode,
+      restartPolicy: session.getRestartPolicy(),
     };
 
     try {
@@ -96,11 +107,21 @@ export class SessionManager {
     this.sessions.set(config.name, session);
     this.registryEntries.set(config.name, entry);
     this.wireHistoryRecording(session, config.name);
+    this.wireCrashHandling(session, config.name);
 
     return session;
   }
 
   async stopSession(name: string): Promise<void> {
+    // Cancel any pending restart
+    const restartTimer = this.pendingRestarts.get(name);
+    if (restartTimer) {
+      clearTimeout(restartTimer);
+      this.pendingRestarts.delete(name);
+      logger.info(`Canceled pending restart for session "${name}"`);
+      this.emit('restartCanceled', name);
+    }
+
     const session = this.sessions.get(name);
     if (session) {
       await session.stop();
@@ -331,5 +352,150 @@ export class SessionManager {
     }
 
     return results;
+  }
+
+  /**
+   * Wire up crash event handling for a session.
+   * Listens to 'crashed' events and triggers restart logic if configured.
+   */
+  private wireCrashHandling(session: Session, sessionName: string): void {
+    session.on('crashed', (event: SessionCrashedEvent) => {
+      this.handleCrash(sessionName, event);
+    });
+  }
+
+  /**
+   * Handle a session crash event and decide whether to restart.
+   */
+  private handleCrash(sessionName: string, event: SessionCrashedEvent): void {
+    // Bubble up crash event to TUI
+    this.emit('sessionCrashed', event);
+
+    const session = this.sessions.get(sessionName);
+    if (!session) {
+      logger.warn(`Cannot handle crash for session "${sessionName}": session not found`);
+      return;
+    }
+
+    const config = (session as any).config as SessionConfig;
+    const restartPolicy = config.restartPolicy ?? { enabled: false, maxRetries: 3 };
+
+    // Check if restart policy is enabled
+    if (!restartPolicy.enabled) {
+      logger.info(`Restart policy disabled for session "${sessionName}", not restarting`);
+      return;
+    }
+
+    // Check if exit code is retryable
+    if (event.classification !== 'Retryable') {
+      logger.warn(
+        `Session "${sessionName}" crashed with non-retryable error: ${event.reason}, not restarting`,
+      );
+      return;
+    }
+
+    // Check if retry count exceeds max retries
+    if (event.retryCount >= restartPolicy.maxRetries) {
+      logger.error(
+        `Session "${sessionName}" exceeded max retries (${restartPolicy.maxRetries}), giving up`,
+      );
+      this.emit('retryLimitExceeded', sessionName, event);
+      return;
+    }
+
+    // Calculate backoff delay (options.backoffFn allows tests to inject instant restarts)
+    const backoffMs = this.options?.backoffFn
+      ? this.options.backoffFn(event.retryCount)
+      : calculateBackoff(event.retryCount);
+    const backoffUntil = new Date(Date.now() + backoffMs);
+
+    logger.info(
+      `Scheduling restart for session "${sessionName}" in ${backoffMs}ms (attempt ${event.retryCount + 1}/${restartPolicy.maxRetries})`,
+    );
+
+    // Update registry with crash state and backoff timestamp
+    this.updateRegistryForCrash(sessionName, event, backoffUntil).catch((err) => {
+      logger.error(`Failed to update registry for crashed session "${sessionName}": ${err}`);
+    });
+
+    // Schedule restart with exponential backoff
+    const timer = setTimeout(() => {
+      this.pendingRestarts.delete(sessionName);
+      this.restartSession(sessionName, event.promptText, event.retryCount + 1).catch((err) => {
+        logger.error(`Failed to restart session "${sessionName}": ${err}`);
+      });
+    }, backoffMs);
+
+    this.pendingRestarts.set(sessionName, timer);
+  }
+
+  /**
+   * Restart a crashed session by recreating it and optionally replaying the last prompt.
+   */
+  private async restartSession(
+    sessionName: string,
+    promptText: string | null,
+    retryCount: number,
+  ): Promise<void> {
+    logger.info(`Restarting session "${sessionName}" (retry ${retryCount})...`);
+
+    const session = this.sessions.get(sessionName);
+    if (!session) {
+      logger.warn(`Cannot restart session "${sessionName}": session not found`);
+      return;
+    }
+
+    // Extract config and state before stopping
+    const config = (session as any).config as SessionConfig;
+    const claudeSessionId = session.getSessionId();
+    const promptCount = session.getInfo().promptCount;
+
+    // Stop and remove the crashed session
+    await session.stop();
+    this.sessions.delete(sessionName);
+    this.registryEntries.delete(sessionName);
+    await this.registry.removeEntry(sessionName);
+
+    // Create a new session with the same config and incremented retry count
+    try {
+      const newSession = await this.startSession(config, claudeSessionId, promptCount, retryCount);
+
+      logger.info(`Session "${sessionName}" restarted successfully`);
+      this.emit('sessionRestarted', sessionName, retryCount);
+
+      // Replay the prompt if the policy requests it
+      if (promptText && config.restartPolicy?.replayPrompt) {
+        logger.info(`Replaying prompt for session "${sessionName}"`);
+        try {
+          await newSession.sendPrompt(promptText);
+          logger.info(`Prompt replay completed for session "${sessionName}"`);
+        } catch (err) {
+          logger.error(`Failed to replay prompt for session "${sessionName}": ${err}`);
+          // Don't throw — the session is already restarted, just the prompt replay failed
+        }
+      }
+    } catch (err) {
+      logger.error(`Failed to restart session "${sessionName}": ${err}`);
+      throw err;
+    }
+  }
+
+  /**
+   * Update the registry with crash state and backoff timestamp.
+   */
+  private async updateRegistryForCrash(
+    sessionName: string,
+    event: SessionCrashedEvent,
+    backoffUntil: Date,
+  ): Promise<void> {
+    await this.registry.withLock((data) => {
+      const entry = data.sessions[sessionName];
+      if (entry) {
+        entry.state = SessionState.Crashed;
+        entry.exitCode = event.exitCode;
+        // Store backoff timestamp in a custom field (not part of RegistryEntry yet)
+        (entry as any).backoffUntil = backoffUntil.toISOString();
+      }
+    });
   }
 }

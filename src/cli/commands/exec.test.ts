@@ -195,6 +195,21 @@ describe('exec command', () => {
 
   describe('exec --group', () => {
     it('should resolve workspace sessions and broadcast to them', async () => {
+      // Create running sessions that are in the workspace
+      const wsA = createMockSession('ws-a', SessionState.Running);
+      const wsB = createMockSession('ws-b', SessionState.Running);
+      mockManager = createMockManager({ 'ws-a': wsA, 'ws-b': wsB });
+
+      // Re-register the command with the updated manager
+      program = new Command();
+      program.exitOverride();
+      registerExecCommand(
+        program,
+        mockManager as unknown as SessionManager,
+        mockRouter as unknown as Router,
+        mockWorkspaceManager as unknown as WorkspaceManager,
+      );
+
       mockWorkspaceManager.getSessionNames.mockResolvedValue(['ws-a', 'ws-b']);
       mockManager.broadcastPrompt.mockResolvedValue([
         { sessionName: 'ws-a', status: 'fulfilled', response: 'ok-a' },
@@ -215,7 +230,7 @@ describe('exec command', () => {
 
       await runCommand(program, ['exec', '--group', 'empty-ws', 'run', 'test']);
 
-      expect(errorSpy).toHaveBeenCalledWith("Error: No sessions in workspace 'empty-ws'.");
+      expect(errorSpy).toHaveBeenCalledWith("Error: No running sessions in workspace 'empty-ws'.");
       expect(process.exitCode).toBe(1);
       expect(mockManager.broadcastPrompt).not.toHaveBeenCalled();
     });

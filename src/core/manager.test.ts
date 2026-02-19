@@ -651,4 +651,336 @@ describe('SessionManager', () => {
       expect(rejectedNames).toEqual(['fail', 'ghost']);
     });
   });
+
+  describe('session auto-restart', () => {
+    // Helper: wait for sessionRestarted event with a 2s safety timeout.
+    const waitForRestart = (): Promise<void> =>
+      new Promise<void>((resolve, reject) => {
+        const t = setTimeout(
+          () => reject(new Error('Timed out waiting for sessionRestarted event')),
+          2000,
+        );
+        manager.once('sessionRestarted', () => {
+          clearTimeout(t);
+          resolve();
+        });
+      });
+
+    beforeEach(() => {
+      // Re-create manager with backoffFn: () => 0 so restarts happen in the next
+      // event-loop tick rather than after 1000ms+. This lets tests use real timers
+      // and await the sessionRestarted event instead of advancing fake timers.
+      //
+      // Also spy on registry.withLock to make it a synchronous no-op, avoiding
+      // proper-lockfile's internal setTimeout usage which would otherwise compete
+      // with real file I/O during restartSession.
+      manager = new SessionManager({ registryPath, backoffFn: () => 0 });
+      vi.spyOn((manager as any).registry, 'withLock').mockResolvedValue(undefined);
+    });
+
+    afterEach(async () => {
+      // Cancel pending restart timers so they don't bleed into the next test.
+      await manager.stopAll().catch(() => {});
+      vi.restoreAllMocks();
+    });
+
+    it('should emit sessionCrashed event when a session crashes', async () => {
+      await manager.init();
+
+      const config: SessionConfig = {
+        name: 'crash-test',
+        workingDirectory: '/tmp/crash',
+        restartPolicy: { enabled: true, maxRetries: 3 },
+      };
+
+      const session = await manager.startSession(config);
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const crashHandler = vi.fn();
+      manager.on('sessionCrashed', crashHandler);
+
+      const p = session.sendPrompt('test');
+      mockChild.emit('close', 1, null);
+
+      await expect(p).rejects.toThrow();
+
+      expect(crashHandler).toHaveBeenCalledTimes(1);
+      expect(crashHandler.mock.calls[0][0]).toMatchObject({
+        sessionName: 'crash-test',
+        exitCode: 1,
+        classification: 'Retryable',
+        retryCount: 0,
+      });
+    });
+
+    it('should schedule restart after retryable crash', async () => {
+      await manager.init();
+
+      const config: SessionConfig = {
+        name: 'retry-session',
+        workingDirectory: '/tmp/retry',
+        restartPolicy: { enabled: true, maxRetries: 3 },
+      };
+
+      const session = await manager.startSession(config);
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const restartHandler = vi.fn();
+      manager.on('sessionRestarted', restartHandler);
+
+      const p = session.sendPrompt('failing prompt');
+      mockChild.emit('close', 1, null);
+      await expect(p).rejects.toThrow();
+
+      await waitForRestart();
+
+      expect(restartHandler).toHaveBeenCalledWith('retry-session', 1);
+    });
+
+    it('should not restart when policy is disabled', async () => {
+      await manager.init();
+
+      const config: SessionConfig = {
+        name: 'no-restart',
+        workingDirectory: '/tmp/no-restart',
+        restartPolicy: { enabled: false, maxRetries: 3 },
+      };
+
+      const session = await manager.startSession(config);
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const restartHandler = vi.fn();
+      manager.on('sessionRestarted', restartHandler);
+
+      const p = session.sendPrompt('test');
+      mockChild.emit('close', 1, null);
+      await expect(p).rejects.toThrow();
+
+      // Brief pause — no restart should fire even with backoffFn: () => 0
+      await new Promise((r) => setTimeout(r, 20));
+      expect(restartHandler).not.toHaveBeenCalled();
+    });
+
+    it('should not restart on permanent failure', async () => {
+      await manager.init();
+
+      const config: SessionConfig = {
+        name: 'permanent-fail',
+        workingDirectory: '/tmp/perm',
+        restartPolicy: { enabled: true, maxRetries: 3 },
+      };
+
+      const session = await manager.startSession(config);
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const restartHandler = vi.fn();
+      manager.on('sessionRestarted', restartHandler);
+
+      const p = session.sendPrompt('test');
+      mockChild.emit('close', 127, null); // Command not found - permanent
+      await expect(p).rejects.toThrow();
+
+      await new Promise((r) => setTimeout(r, 20));
+      expect(restartHandler).not.toHaveBeenCalled();
+    });
+
+    it('should emit retryLimitExceeded when max retries reached', async () => {
+      await manager.init();
+
+      const config: SessionConfig = {
+        name: 'max-retry',
+        workingDirectory: '/tmp/max',
+        restartPolicy: { enabled: true, maxRetries: 2 },
+      };
+
+      // Start session with retry count already at limit
+      const session = await manager.startSession(config, undefined, undefined, 2);
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const limitHandler = vi.fn();
+      const restartHandler = vi.fn();
+      manager.on('retryLimitExceeded', limitHandler);
+      manager.on('sessionRestarted', restartHandler);
+
+      const p = session.sendPrompt('test');
+      mockChild.emit('close', 1, null);
+      await expect(p).rejects.toThrow();
+
+      await new Promise((r) => setTimeout(r, 20));
+      expect(limitHandler).toHaveBeenCalledWith('max-retry', expect.any(Object));
+      expect(restartHandler).not.toHaveBeenCalled();
+    });
+
+    it('should cancel pending restart when session is stopped', async () => {
+      await manager.init();
+
+      const config: SessionConfig = {
+        name: 'cancel-restart',
+        workingDirectory: '/tmp/cancel',
+        restartPolicy: { enabled: true, maxRetries: 3 },
+      };
+
+      const session = await manager.startSession(config);
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const cancelHandler = vi.fn();
+      manager.on('restartCanceled', cancelHandler);
+
+      const p = session.sendPrompt('test');
+      mockChild.emit('close', 1, null);
+      await expect(p).rejects.toThrow();
+
+      // stopSession calls clearTimeout synchronously before any await, so the
+      // 0ms restart timer is cancelled before the event loop can fire it.
+      await manager.stopSession('cancel-restart');
+
+      expect(cancelHandler).toHaveBeenCalledWith('cancel-restart');
+
+      // Give time for any errant restart to fire and verify it doesn't
+      await new Promise((r) => setTimeout(r, 20));
+      expect(manager.getSession('cancel-restart')).toBeUndefined();
+    });
+
+    it('should preserve claudeSessionId and promptCount on restart', async () => {
+      await manager.init();
+
+      const config: SessionConfig = {
+        name: 'preserve-id',
+        workingDirectory: '/tmp/preserve',
+        restartPolicy: { enabled: true, maxRetries: 3 },
+      };
+
+      const session = await manager.startSession(config);
+      const originalSessionId = session.getSessionId();
+
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const p1 = session.sendPrompt('crash me');
+      mockChild.emit('close', 1, null);
+      await expect(p1).rejects.toThrow();
+
+      await waitForRestart();
+
+      const newSession = manager.getSession('preserve-id');
+      expect(newSession).toBeDefined();
+      expect(newSession?.getSessionId()).toBe(originalSessionId);
+    });
+
+    it('should replay last prompt on restart when replayPrompt is true', async () => {
+      await manager.init();
+
+      const config: SessionConfig = {
+        name: 'replay-prompt',
+        workingDirectory: '/tmp/replay',
+        restartPolicy: { enabled: true, maxRetries: 3, replayPrompt: true },
+      };
+
+      const session = await manager.startSession(config);
+
+      const mockChild1 = createMockChild(42);
+      const mockChild2 = createMockChild(43);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValueOnce(mockChild1 as any).mockReturnValueOnce(mockChild2 as any);
+
+      const p1 = session.sendPrompt('important prompt');
+      mockChild1.emit('close', 1, null);
+      await expect(p1).rejects.toThrow();
+
+      // sessionRestarted fires before the replay sendPrompt is awaited;
+      // EventEmitter.emit is synchronous so stdin.write is called in the same tick.
+      await waitForRestart();
+
+      expect(mockChild2.stdin.write).toHaveBeenCalledWith('important prompt');
+    });
+
+    it('should call backoffFn with increasing attempt numbers on repeated crashes', async () => {
+      await manager.init();
+
+      // Use a spy backoffFn so we can verify the attempt argument
+      const backoffAttempts: number[] = [];
+      manager = new SessionManager({
+        registryPath,
+        backoffFn: (attempt) => {
+          backoffAttempts.push(attempt);
+          return 0;
+        },
+      });
+      vi.spyOn((manager as any).registry, 'withLock').mockResolvedValue(undefined);
+      await manager.init();
+
+      const config: SessionConfig = {
+        name: 'backoff-test',
+        workingDirectory: '/tmp/backoff',
+        restartPolicy: { enabled: true, maxRetries: 5 },
+      };
+
+      const session = await manager.startSession(config);
+      // Use separate mocks so that each sendPrompt gets its own child process object.
+      // Reusing a single mockChild would cause the first sendPrompt's 'close' listener
+      // to fire again on the second emit, triggering a spurious extra crash/restart.
+      const mockChild1 = createMockChild(42);
+      const mockChild2 = createMockChild(43);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValueOnce(mockChild1 as any).mockReturnValueOnce(mockChild2 as any);
+
+      // First crash → attempt 0
+      const p1 = session.sendPrompt('crash 1');
+      mockChild1.emit('close', 1, null);
+      await expect(p1).rejects.toThrow();
+      await waitForRestart();
+
+      const newSession = manager.getSession('backoff-test');
+      expect(newSession).toBeDefined();
+      expect(newSession?.getRetryCount()).toBe(1);
+
+      // Second crash → attempt 1
+      const p2 = newSession!.sendPrompt('crash 2');
+      mockChild2.emit('close', 1, null);
+      await expect(p2).rejects.toThrow();
+      await waitForRestart();
+
+      const finalSession = manager.getSession('backoff-test');
+      expect(finalSession).toBeDefined();
+      expect(finalSession?.getRetryCount()).toBe(2);
+
+      // Verify backoffFn was called with increasing attempt numbers
+      expect(backoffAttempts[0]).toBe(0);
+      expect(backoffAttempts[1]).toBe(1);
+    });
+
+  });
+
+  it('startSession() persists restartPolicy in registry', async () => {
+    await manager.init();
+
+    const config: SessionConfig = {
+      name: 'persist-policy',
+      workingDirectory: '/tmp/policy',
+      restartPolicy: { enabled: true, maxRetries: 5 },
+    };
+
+    await manager.startSession(config);
+
+    const raw = await fs.readFile(registryPath, 'utf-8');
+    const data = JSON.parse(raw);
+
+    expect(data.sessions['persist-policy'].restartPolicy).toEqual({
+      enabled: true,
+      maxRetries: 5,
+    });
+  });
 });

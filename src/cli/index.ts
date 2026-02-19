@@ -14,6 +14,7 @@ import { registerTUICommand } from './commands/tui.js';
 import { registerWorkspaceCommand } from './commands/workspace.js';
 import { registerHistoryCommand } from './commands/history.js';
 import { registerTemplateCommand } from './commands/template.js';
+import { registerExportCommand } from './commands/export.js';
 
 export const program: Command = new Command()
   .name('agentspawn')
@@ -47,7 +48,8 @@ export async function run(argv: string[]): Promise<void> {
   registerTUICommand(program, manager, router, historyStore, templateManager);
   registerWorkspaceCommand(program, manager, router, workspaceManager);
   registerHistoryCommand(program, manager, historyStore);
-  registerTemplateCommand(program, templateManager);
+  registerTemplateCommand(program, templateManager, manager);
+  registerExportCommand(program, historyStore);
 
   await program.parseAsync(argv);
 }

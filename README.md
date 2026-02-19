@@ -124,6 +124,30 @@ agentspawn history my-session --search "auth"   # Search within a session
 agentspawn replay my-session 5                  # Replay prompt #5 from history
 ```
 
+### Export History
+
+Export session history to a file for documentation, audit trails, or integration with other tools:
+
+```bash
+agentspawn export my-session                              # Export as Markdown (default)
+agentspawn export my-session --format json                # Export as JSON
+agentspawn export my-session --format text                # Export as plain text
+agentspawn export my-session --output ./docs/session.md   # Custom output path
+```
+
+**Export Formats:**
+
+- **Markdown** (default) - Human-readable format with headers, code blocks, and metadata. Best for documentation and sharing.
+- **JSON** - Machine-readable structured format. Best for programmatic processing, integration with other tools, or archiving.
+- **Plain text** - Simple grep-friendly format with consistent separators. Best for quick searching and command-line processing.
+
+**Use Cases:**
+- **Audit trails** - Keep records of prompts and responses for compliance or review
+- **Documentation** - Export successful sessions as reference material or tutorials
+- **Knowledge sharing** - Share session transcripts with team members or stakeholders
+- **Integration** - Pipe JSON exports to analysis tools, databases, or reporting systems
+- **Debugging** - Export problematic sessions for offline analysis
+
 ## Commands
 
 | Command | Description |
@@ -138,6 +162,7 @@ agentspawn replay my-session 5                  # Replay prompt #5 from history
 | `agentspawn template <cmd>` | Manage session templates (create, list, show, delete) |
 | `agentspawn history [session]` | Show prompt history, search across sessions |
 | `agentspawn replay <session> <index>` | Replay a prompt from history |
+| `agentspawn export <session>` | Export session history to a file (markdown, json, or text format) |
 
 Every command supports `--help` for detailed usage.
 
@@ -151,6 +176,7 @@ Every command supports `--help` for detailed usage.
 - **Session templates** — save and reuse session configurations (directory, permissions, env, system prompt)
 - **Prompt history** — persistent per-session prompt history with search and replay
 - **History search overlay** — Ctrl+R in attached mode for interactive history search
+- **History export** — export session history to markdown, JSON, or plain text formats
 - **Cross-process discovery** — event-based registry watching to discover sessions started by other processes
 - **Persistent registry** — session state persists via `~/.agentspawn/sessions.json` with file locking
 - **Prompt timeout** — configurable timeout for hung Claude processes (default 5 min)
@@ -158,6 +184,111 @@ Every command supports `--help` for detailed usage.
 - **Graceful shutdown** — SIGTERM first, SIGKILL after configurable timeout (default 5s)
 - **Real-time output** — streaming response display with timestamps, error highlighting, and memory-bounded buffers
 - **Scriptable** — `--json` flag, proper exit codes (0 success, 1 user error, 2 system error)
+
+## Export Format Specifications
+
+Each export format includes metadata (session name, export timestamp, entry count, date range) and all prompt-response pairs from the session history.
+
+### Markdown Format
+
+Structure:
+- Level 1 heading with session name
+- Metadata section with export timestamp, entry count, and date range
+- Level 2 headings per prompt (indexed)
+- Code blocks for prompt and response content
+
+Example output:
+```markdown
+# my-session
+
+**Exported:** 2026-02-15T10:30:00.000Z
+**Entries:** 3
+**Date Range:** 2026-02-15T09:00:00.000Z to 2026-02-15T10:00:00.000Z
+
+---
+
+## Prompt #1
+
+**Timestamp:** 2026-02-15T09:00:00.000Z
+
+**Prompt:**
+
+```
+Create a new feature
+```
+
+**Response:**
+
+```
+I'll help you create a new feature...
+```
+```
+
+Best for: Documentation, sharing with stakeholders, archiving conversations for reference.
+
+### JSON Format
+
+Structure:
+- Root object with `metadata` and `entries` keys
+- 2-space indentation
+- ISO 8601 timestamps
+- Full content preservation
+
+Example output:
+```json
+{
+  "metadata": {
+    "sessionName": "my-session",
+    "exportedAt": "2026-02-15T10:30:00.000Z",
+    "entryCount": 3,
+    "dateRange": {
+      "oldest": "2026-02-15T09:00:00.000Z",
+      "newest": "2026-02-15T10:00:00.000Z"
+    }
+  },
+  "entries": [
+    {
+      "session": "my-session",
+      "index": 1,
+      "timestamp": "2026-02-15T09:00:00.000Z",
+      "prompt": "Create a new feature",
+      "responsePreview": "I'll help you create a new feature..."
+    }
+  ]
+}
+```
+
+Best for: Programmatic processing, integration with databases, analysis tools, CI/CD pipelines.
+
+### Plain Text Format
+
+Structure:
+- Session header with uppercase labels
+- 80-character separators (`=` for header, `-` between entries)
+- Entry blocks with `[#index] timestamp`, `PROMPT:`, `RESPONSE:` labels
+- Grep-friendly format
+
+Example output:
+```text
+================================================================================
+SESSION: my-session
+EXPORTED: 2026-02-15T10:30:00.000Z
+ENTRIES: 3
+DATE RANGE: 2026-02-15T09:00:00.000Z to 2026-02-15T10:00:00.000Z
+================================================================================
+
+[#1] 2026-02-15T09:00:00.000Z
+
+PROMPT:
+Create a new feature
+
+RESPONSE:
+I'll help you create a new feature...
+
+--------------------------------------------------------------------------------
+```
+
+Best for: Command-line searching with `grep`, quick scanning, log file analysis, minimal formatting needs.
 
 ## Development
 

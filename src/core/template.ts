@@ -109,6 +109,7 @@ export class TemplateManager {
       permissionMode?: string;
       systemPrompt?: string;
       env?: Record<string, string>;
+      restartPolicy?: import('../types.js').RestartPolicy;
     },
   ): Promise<void> {
     await this.withLock((data) => {
@@ -130,6 +131,9 @@ export class TemplateManager {
       }
       if (config.env !== undefined) {
         entry.env = config.env;
+      }
+      if (config.restartPolicy !== undefined) {
+        entry.restartPolicy = config.restartPolicy;
       }
       data.templates[name] = entry;
     });

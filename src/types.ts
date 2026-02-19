@@ -1,6 +1,7 @@
 import type { ChildProcess } from 'node:child_process';
 import type { Writable, Readable } from 'node:stream';
 import type { HistoryStore } from './core/history.js';
+import type { ExitClassification } from './core/restart-policy.js';
 
 export enum SessionState {
   Running = 'running',
@@ -15,12 +16,22 @@ export interface SessionHandle {
   stderr: Readable;
 }
 
+export interface RestartPolicy {
+  enabled: boolean;
+  maxRetries: number;
+  initialBackoffMs?: number;
+  maxBackoffMs?: number;
+  retryableExitCodes?: number[];
+  replayPrompt?: boolean;
+}
+
 export interface SessionConfig {
   name: string;
   workingDirectory: string;
   env?: Record<string, string>;
   permissionMode?: string;
   promptTimeoutMs?: number;
+  restartPolicy?: RestartPolicy;
 }
 
 export interface SessionInfo {
@@ -45,6 +56,7 @@ export interface RegistryEntry {
   claudeSessionId?: string;
   promptCount?: number;
   permissionMode?: string;
+  restartPolicy?: RestartPolicy;
 }
 
 export interface RegistryData {
@@ -56,6 +68,8 @@ export interface ManagerOptions {
   registryPath?: string;
   shutdownTimeoutMs?: number;
   historyStore?: HistoryStore;
+  /** Override the backoff calculation (e.g. `() => 0` in tests for instant restarts). */
+  backoffFn?: (attempt: number) => number;
 }
 
 export interface RouterOptions {
@@ -91,6 +105,7 @@ export interface TemplateEntry {
    */
   systemPrompt?: string;
   env?: Record<string, string>;
+  restartPolicy?: RestartPolicy;
   createdAt: string;
 }
 
@@ -113,4 +128,14 @@ export interface AgentSpawnConfig {
   templatesPath?: string;
   logLevel: string;
   shutdownTimeoutMs: number;
+}
+
+export interface SessionCrashedEvent {
+  sessionName: string;
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+  classification: ExitClassification;
+  reason: string;
+  promptText: string | null;
+  retryCount: number;
 }

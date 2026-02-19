@@ -1,15 +1,18 @@
 import { Command } from 'commander';
 import path from 'node:path';
 import { TemplateManager } from '../../core/template.js';
+import { SessionManager } from '../../core/manager.js';
 import { formatTemplateTable } from '../../io/formatter.js';
 import {
   TemplateAlreadyExistsError,
   TemplateNotFoundError,
+  SessionNotFoundError,
 } from '../../utils/errors.js';
 
 export function registerTemplateCommand(
   program: Command,
   templateManager: TemplateManager,
+  manager?: SessionManager,
 ): void {
   const tpl = program
     .command('template')
@@ -25,6 +28,8 @@ export function registerTemplateCommand(
     )
     .option('--system-prompt <text>', 'System prompt for sessions')
     .option('-e, --env <pairs...>', 'Environment variables as KEY=VALUE pairs')
+    .option('--restart-enabled', 'Enable automatic restart on crash')
+    .option('--restart-max-retries <count>', 'Maximum number of restart attempts', '3')
     .action(
       async (
         name: string,
@@ -33,6 +38,8 @@ export function registerTemplateCommand(
           permissionMode?: string;
           systemPrompt?: string;
           env?: string[];
+          restartEnabled?: boolean;
+          restartMaxRetries?: string;
         },
       ) => {
         try {
@@ -54,11 +61,26 @@ export function registerTemplateCommand(
             }
           }
 
+          let restartPolicy;
+          if (options.restartEnabled !== undefined) {
+            const maxRetries = parseInt(options.restartMaxRetries ?? '3', 10);
+            if (isNaN(maxRetries) || maxRetries < 0) {
+              console.error('Error: restart-max-retries must be a non-negative number');
+              process.exitCode = 1;
+              return;
+            }
+            restartPolicy = {
+              enabled: options.restartEnabled,
+              maxRetries,
+            };
+          }
+
           await templateManager.create(name, {
             workingDirectory: options.dir ? path.resolve(options.dir) : undefined,
             permissionMode: options.permissionMode,
             systemPrompt: options.systemPrompt,
             env,
+            restartPolicy,
           });
           console.log(`Template "${name}" created`);
         } catch (e) {
@@ -71,6 +93,48 @@ export function registerTemplateCommand(
         }
       },
     );
+
+  tpl
+    .command('save <session-name> <template-name>')
+    .description('Save a running session as a template')
+    .action(async (sessionName: string, templateName: string) => {
+      if (!manager) {
+        console.error('Error: Session manager is not available.');
+        process.exitCode = 2;
+        return;
+      }
+
+      try {
+        // Get the session info from the registry
+        const registryData = await manager.registry.load();
+        const registryEntry = registryData.sessions[sessionName];
+
+        if (!registryEntry) {
+          throw new SessionNotFoundError(sessionName);
+        }
+
+        // Create template from session's configuration
+        await templateManager.create(templateName, {
+          workingDirectory: registryEntry.workingDirectory,
+          permissionMode: registryEntry.permissionMode,
+          restartPolicy: registryEntry.restartPolicy,
+        });
+
+        console.log(`Template "${templateName}" created from session "${sessionName}"`);
+      } catch (e) {
+        if (e instanceof SessionNotFoundError) {
+          console.error(`Error: ${e.message}`);
+          process.exitCode = 1;
+          return;
+        }
+        if (e instanceof TemplateAlreadyExistsError) {
+          console.error(`Error: ${e.message}`);
+          process.exitCode = 1;
+          return;
+        }
+        throw e;
+      }
+    });
 
   tpl
     .command('list')
@@ -106,6 +170,11 @@ export function registerTemplateCommand(
         console.log(`Directory: ${template.workingDirectory ?? '--'}`);
         console.log(`Permission Mode: ${template.permissionMode ?? '--'}`);
         console.log(`System Prompt: ${template.systemPrompt ?? '--'}`);
+        if (template.restartPolicy) {
+          console.log(`Restart Policy: ${template.restartPolicy.enabled ? 'enabled' : 'disabled'} (max retries: ${template.restartPolicy.maxRetries})`);
+        } else {
+          console.log('Restart Policy: --');
+        }
         if (template.env && Object.keys(template.env).length > 0) {
           console.log('Environment:');
           for (const [key, value] of Object.entries(template.env)) {

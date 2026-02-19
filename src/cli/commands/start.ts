@@ -5,6 +5,7 @@ import { Router } from '../../io/router.js';
 import { TemplateManager } from '../../core/template.js';
 import { formatStatusLine } from '../../io/formatter.js';
 import { SessionAlreadyExistsError, SpawnFailedError, TemplateNotFoundError } from '../../utils/errors.js';
+import type { RestartPolicy } from '../../types.js';
 
 export function registerStartCommand(
   program: Command,
@@ -19,11 +20,14 @@ export function registerStartCommand(
     .option('-d, --dir <path>', 'Working directory')
     .option('--permission-mode <mode>', 'Permission mode for Claude (bypassPermissions, acceptEdits, default, plan, delegate, dontAsk)')
     .option('-t, --template <name>', 'Use a session template')
-    .action(async (name: string, options: { dir?: string; permissionMode?: string; template?: string }) => {
+    .option('--max-retries <number>', 'Maximum restart attempts (default: 3)', '3')
+    .option('--retry-backoff <ms>', 'Initial backoff delay in milliseconds (default: 1000)', '1000')
+    .action(async (name: string, options: { dir?: string; permissionMode?: string; template?: string; maxRetries: string; retryBackoff: string }) => {
       try {
         let workingDirectory = options.dir ? path.resolve(options.dir) : undefined;
         let permissionMode = options.permissionMode;
         let env: Record<string, string> | undefined;
+        let templateRestartPolicy: RestartPolicy | undefined;
 
         if (options.template) {
           if (!templateManager) {
@@ -43,6 +47,9 @@ export function registerStartCommand(
             if (template.env) {
               env = { ...template.env };
             }
+            if (template.restartPolicy) {
+              templateRestartPolicy = template.restartPolicy;
+            }
           } catch (e) {
             if (e instanceof TemplateNotFoundError) {
               console.error(`Error: ${e.message}`);
@@ -61,11 +68,38 @@ export function registerStartCommand(
           permissionMode = 'bypassPermissions';
         }
 
+        // Parse retry flags and build restart policy
+        const maxRetries = parseInt(options.maxRetries, 10);
+        const retryBackoff = parseInt(options.retryBackoff, 10);
+
+        if (isNaN(maxRetries) || maxRetries < 0) {
+          console.error('Error: --max-retries must be a non-negative number');
+          process.exitCode = 1;
+          return;
+        }
+
+        if (isNaN(retryBackoff) || retryBackoff < 0) {
+          console.error('Error: --retry-backoff must be a non-negative number');
+          process.exitCode = 1;
+          return;
+        }
+
+        // Build restart policy: merge template defaults with CLI flags
+        const restartPolicy: RestartPolicy = {
+          enabled: true,
+          maxRetries: templateRestartPolicy?.maxRetries ?? maxRetries,
+          initialBackoffMs: retryBackoff,
+          maxBackoffMs: 30000,
+          retryableExitCodes: [1, 137],
+          replayPrompt: true,
+        };
+
         const session = await manager.startSession({
           name,
           workingDirectory,
           permissionMode,
           env,
+          restartPolicy,
         });
         console.log(formatStatusLine(session.getInfo()));
       } catch (e) {

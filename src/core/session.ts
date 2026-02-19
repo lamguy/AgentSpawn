@@ -1,10 +1,11 @@
 import { spawn, ChildProcess } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
-import { SessionState, SessionConfig, SessionInfo } from '../types.js';
+import { SessionState, SessionConfig, SessionInfo, SessionCrashedEvent, RestartPolicy } from '../types.js';
 import { logger } from '../utils/logger.js';
 import { PromptTimeoutError } from '../utils/errors.js';
 import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
+import { classifyExitCode } from './restart-policy.js';
 
 /**
  * Session — represents a conversation with Claude Code.
@@ -21,16 +22,22 @@ export class Session extends EventEmitter {
   private claudeSessionId: string;
   private promptCount: number = 0;
   private activeProcess: ChildProcess | null = null;
+  private restartPolicy: RestartPolicy;
+  private lastPrompt: string | null = null;
+  private retryCount: number = 0;
 
   constructor(
     private readonly config: SessionConfig,
     private readonly shutdownTimeoutMs: number = 5000,
     initialSessionId?: string,
     initialPromptCount?: number,
+    initialRetryCount: number = 0,
   ) {
     super();
     this.claudeSessionId = initialSessionId ?? crypto.randomUUID();
     this.promptCount = initialPromptCount ?? 0;
+    this.retryCount = initialRetryCount;
+    this.restartPolicy = config.restartPolicy ?? { enabled: false, maxRetries: 3 };
   }
 
   async start(): Promise<void> {
@@ -58,6 +65,9 @@ export class Session extends EventEmitter {
     if (this.activeProcess) {
       throw new Error(`Session "${this.config.name}" is already processing a prompt`);
     }
+
+    // Store the prompt for crash recovery
+    this.lastPrompt = prompt;
 
     logger.info(`Sending prompt to session "${this.config.name}"`);
     this.emit('promptStart', prompt);
@@ -141,7 +151,7 @@ export class Session extends EventEmitter {
         reject(err);
       });
 
-      child.on('close', (code: number | null) => {
+      child.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
         // Process any remaining buffered JSON
         if (jsonBuffer.trim()) {
           try {
@@ -175,12 +185,32 @@ export class Session extends EventEmitter {
         settle();
 
         if (code === 0) {
+          // Success — reset retry count
+          this.retryCount = 0;
           logger.info(`Prompt completed for session "${this.config.name}"`);
           this.emit('promptComplete', response);
           resolve(response);
         } else {
-          logger.error(`Prompt failed for session "${this.config.name}" (exit code ${code})`);
-          const err = new Error(`Claude exited with code ${code}`);
+          // Crash detected — classify exit code and emit crashed event
+          const { classification, reason } = classifyExitCode(code, signal);
+
+          logger.error(
+            `Prompt failed for session "${this.config.name}" (exit code ${code}, signal ${signal}): ${reason}`,
+          );
+
+          const crashedEvent: SessionCrashedEvent = {
+            sessionName: this.config.name,
+            exitCode: code,
+            signal,
+            classification,
+            reason,
+            promptText: this.lastPrompt,
+            retryCount: this.retryCount,
+          };
+
+          this.emit('crashed', crashedEvent);
+
+          const err = new Error(`Claude exited with code ${code}: ${reason}`);
           this.emit('promptError', err);
           reject(err);
         }
@@ -321,6 +351,26 @@ export class Session extends EventEmitter {
 
   getExitCode(): number | null {
     return this.exitCode;
+  }
+
+  getRetryCount(): number {
+    return this.retryCount;
+  }
+
+  getLastPrompt(): string | null {
+    return this.lastPrompt;
+  }
+
+  getRestartPolicy(): RestartPolicy {
+    return this.restartPolicy;
+  }
+
+  incrementRetryCount(): void {
+    this.retryCount++;
+  }
+
+  resetRetryCount(): void {
+    this.retryCount = 0;
   }
 
   // Legacy compatibility — not used in prompt mode
