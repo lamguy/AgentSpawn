@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, Box } from 'ink';
+import { Box } from 'ink';
 import { SessionListPane } from './SessionListPane.js';
 import { SessionState, type SessionInfo } from '../../types.js';
 

@@ -1,4 +1,4 @@
-import type { SessionInfo } from '../types.js';
+import type { SessionInfo, PromptHistoryEntry } from '../types.js';
 
 /**
  * Base TUI interaction mode.
@@ -16,7 +16,8 @@ export type OverlayState =
   | HelpOverlayState
   | ActionMenuOverlayState
   | SessionCreationOverlayState
-  | ConfirmationOverlayState;
+  | ConfirmationOverlayState
+  | HistorySearchOverlayState;
 
 export interface HelpOverlayState {
   kind: 'help';
@@ -37,14 +38,16 @@ export interface SessionCreationOverlayState {
   /** Form field values */
   fields: {
     name: string;
+    template: string;
     directory: string;
     permissionMode: string;
   };
   /** Which form field is currently focused */
-  activeField: 'name' | 'directory' | 'permissionMode';
+  activeField: 'name' | 'template' | 'directory' | 'permissionMode';
   /** Validation errors keyed by field name (empty string = no error) */
   errors: {
     name: string;
+    template: string;
     directory: string;
     permissionMode: string;
   };
@@ -60,6 +63,14 @@ export interface ConfirmationOverlayState {
   message: string;
   /** The action to execute if confirmed */
   action: ConfirmableAction;
+}
+
+export interface HistorySearchOverlayState {
+  kind: 'history-search';
+  query: string;
+  results: (PromptHistoryEntry & { sessionName: string })[];
+  selectedIndex: number;
+  isLoading: boolean;
 }
 
 /**
@@ -88,10 +99,13 @@ export interface StatusMessage {
  */
 export type TUIAction =
   | { kind: 'create-session'; name: string; directory: string; permissionMode: string }
+  | { kind: 'create-session-from-template'; name: string; templateName: string; directory: string; permissionMode: string }
   | { kind: 'stop-session'; sessionName: string }
   | { kind: 'restart-session'; sessionName: string }
   | { kind: 'stop-all' }
-  | { kind: 'send-prompt'; sessionName: string; prompt: string };
+  | { kind: 'send-prompt'; sessionName: string; prompt: string }
+  | { kind: 'history-search-load'; sessionName: string | undefined; query: string }
+  | { kind: 'history-insert'; prompt: string };
 
 // ── Action Menu Item ────────────────────────────────────────────────────────
 
@@ -128,6 +142,20 @@ export interface TUIState {
   overlayStack: OverlayState[];
   /** Transient message to display in the status bar (auto-clears) */
   statusMessage: StatusMessage | null;
+  /** Pending input text to pre-fill in the InputBar (e.g., from history search) */
+  pendingInput?: string | null;
+  /** Whether split-pane view is active (shows two output panes side by side) */
+  splitMode: boolean;
+  /** Names of sessions assigned to each split pane (left=index 0, right=index 1) */
+  splitPaneSessions: [string | null, string | null];
+  /** Which split pane is currently focused (0=left, 1=right) */
+  activePaneIndex: 0 | 1;
+  /** Per-session output line cache used in split mode. Keys are session names. */
+  splitOutputLines: Map<string, OutputLine[]>;
+  /** Sessions fetched from all polled remote instances. Entries carry remoteAlias. */
+  remoteSessions: SessionInfo[];
+  /** Remotes that were unreachable on the last poll cycle. */
+  remoteErrors: Array<{ alias: string; error: string }>;
 }
 
 // ── Options ─────────────────────────────────────────────────────────────────
@@ -186,4 +214,8 @@ export interface OutputCaptureConfig {
   maxLinesPerSession?: number;
   /** Whether to capture stderr separately */
   captureStderr?: boolean;
+  /** Maximum total lines across all sessions. 0 or Infinity = disabled. Default: 10000 */
+  maxTotalLines?: number;
+  /** Maximum characters per line. Lines exceeding this are truncated. 0 or Infinity = disabled. Default: 10000 */
+  maxLineLength?: number;
 }

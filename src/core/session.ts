@@ -1,8 +1,12 @@
 import { spawn, ChildProcess } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
-import { SessionState, SessionConfig, SessionInfo } from '../types.js';
+import { SessionState, SessionConfig, SessionInfo, SessionCrashedEvent, SessionMetrics, RestartPolicy } from '../types.js';
+import { logger } from '../utils/logger.js';
+import { PromptTimeoutError } from '../utils/errors.js';
 import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
+import { classifyExitCode } from './restart-policy.js';
+import { SandboxManager } from './sandbox.js';
 
 /**
  * Session — represents a conversation with Claude Code.
@@ -19,16 +23,26 @@ export class Session extends EventEmitter {
   private claudeSessionId: string;
   private promptCount: number = 0;
   private activeProcess: ChildProcess | null = null;
+  private restartPolicy: RestartPolicy;
+  private lastPrompt: string | null = null;
+  private retryCount: number = 0;
+  private responseTimes: number[] = [];
+  private totalResponseChars: number = 0;
+  private promptStartTime: number = 0;
 
   constructor(
     private readonly config: SessionConfig,
     private readonly shutdownTimeoutMs: number = 5000,
     initialSessionId?: string,
     initialPromptCount?: number,
+    initialRetryCount: number = 0,
+    private readonly sandbox?: SandboxManager,
   ) {
     super();
     this.claudeSessionId = initialSessionId ?? crypto.randomUUID();
     this.promptCount = initialPromptCount ?? 0;
+    this.retryCount = initialRetryCount;
+    this.restartPolicy = config.restartPolicy ?? { enabled: false, maxRetries: 3 };
   }
 
   async start(): Promise<void> {
@@ -57,9 +71,30 @@ export class Session extends EventEmitter {
       throw new Error(`Session "${this.config.name}" is already processing a prompt`);
     }
 
+    // Store the prompt for crash recovery
+    this.lastPrompt = prompt;
+
+    // Record start time for response-time tracking
+    this.promptStartTime = Date.now();
+
+    logger.info(`Sending prompt to session "${this.config.name}"`);
     this.emit('promptStart', prompt);
 
+    const timeoutMs = this.config.promptTimeoutMs ?? 300000;
+
     return new Promise<string>((resolve, reject) => {
+      let settled = false;
+      let timedOut = false;
+      let timeoutTimer: NodeJS.Timeout | undefined;
+
+      const settle = (): void => {
+        settled = true;
+        if (timeoutTimer) {
+          clearTimeout(timeoutTimer);
+          timeoutTimer = undefined;
+        }
+      };
+
       // Build args: first prompt uses --session-id, subsequent use --resume
       const args = ['--print', '--output-format', 'stream-json', '--verbose'];
       if (this.promptCount === 0) {
@@ -72,7 +107,10 @@ export class Session extends EventEmitter {
         args.push('--permission-mode', this.config.permissionMode);
       }
 
-      const child = spawn('claude', args, {
+      const { cmd, args: spawnArgs } = this.sandbox
+        ? this.sandbox.buildSpawnArgs(args)
+        : { cmd: 'claude', args };
+      const child = spawn(cmd, spawnArgs, {
         cwd: this.config.workingDirectory,
         env: { ...process.env, ...this.config.env },
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -116,12 +154,15 @@ export class Session extends EventEmitter {
       });
 
       child.on('error', (err: Error) => {
+        if (settled) return;
+        settle();
+        logger.error(`Spawn error for session "${this.config.name}": ${err.message}`);
         this.activeProcess = null;
         this.emit('promptError', err);
         reject(err);
       });
 
-      child.on('close', (code: number | null) => {
+      child.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
         // Process any remaining buffered JSON
         if (jsonBuffer.trim()) {
           try {
@@ -139,11 +180,51 @@ export class Session extends EventEmitter {
         this.activeProcess = null;
         this.promptCount++;
 
+        if (timedOut) {
+          settle();
+          const err = new PromptTimeoutError(this.config.name, timeoutMs, prompt);
+          this.emit('promptTimeout', {
+            sessionName: this.config.name,
+            timeoutMs,
+            promptText: prompt,
+            partialResponse: response,
+          });
+          reject(err);
+          return;
+        }
+
+        settle();
+
         if (code === 0) {
+          // Success — record metrics and reset retry count
+          const elapsedMs = Date.now() - this.promptStartTime;
+          this.responseTimes.push(elapsedMs);
+          this.totalResponseChars += response.length;
+          this.retryCount = 0;
+          logger.info(`Prompt completed for session "${this.config.name}"`);
           this.emit('promptComplete', response);
           resolve(response);
         } else {
-          const err = new Error(`Claude exited with code ${code}`);
+          // Crash detected — classify exit code and emit crashed event
+          const { classification, reason } = classifyExitCode(code, signal);
+
+          logger.error(
+            `Prompt failed for session "${this.config.name}" (exit code ${code}, signal ${signal}): ${reason}`,
+          );
+
+          const crashedEvent: SessionCrashedEvent = {
+            sessionName: this.config.name,
+            exitCode: code,
+            signal,
+            classification,
+            reason,
+            promptText: this.lastPrompt,
+            retryCount: this.retryCount,
+          };
+
+          this.emit('crashed', crashedEvent);
+
+          const err = new Error(`Claude exited with code ${code}: ${reason}`);
           this.emit('promptError', err);
           reject(err);
         }
@@ -152,6 +233,40 @@ export class Session extends EventEmitter {
       // Write prompt to stdin and close it
       child.stdin?.write(prompt);
       child.stdin?.end();
+
+      // Set up timeout if enabled (timeoutMs > 0; 0 means no timeout)
+      if (timeoutMs > 0) {
+        timeoutTimer = setTimeout(() => {
+          if (settled) return;
+          timedOut = true;
+          logger.warn(`Prompt timed out after ${timeoutMs}ms in session "${this.config.name}"`);
+          try {
+            child.kill('SIGTERM');
+          } catch {
+            // Already dead
+          }
+          // Grace period: SIGKILL if child doesn't exit
+          const graceMs = this.shutdownTimeoutMs;
+          let graceTimer: NodeJS.Timeout | undefined = setTimeout(() => {
+            graceTimer = undefined;
+            if (this.activeProcess === child) {
+              try {
+                child.kill('SIGKILL');
+              } catch {
+                // Already dead
+              }
+            }
+          }, graceMs);
+
+          // Clear grace timer if child exits promptly after SIGTERM
+          child.once('close', () => {
+            if (graceTimer) {
+              clearTimeout(graceTimer);
+              graceTimer = undefined;
+            }
+          });
+        }, timeoutMs);
+      }
     });
   }
 
@@ -225,6 +340,8 @@ export class Session extends EventEmitter {
       }
       this.activeProcess = null;
     }
+
+    await this.sandbox?.stop();
   }
 
   getState(): SessionState {
@@ -241,6 +358,27 @@ export class Session extends EventEmitter {
       exitCode: this.exitCode,
       promptCount: this.promptCount,
       permissionMode: this.config.permissionMode,
+      tags: this.config.tags,
+      sandboxed: this.sandbox !== undefined,
+      sandboxBackend: this.sandbox?.getBackend(),
+      sandboxLevel: this.sandbox?.getLevel(),
+    };
+  }
+
+  getMetrics(): SessionMetrics {
+    const avgResponseTimeMs =
+      this.responseTimes.length > 0
+        ? this.responseTimes.reduce((sum, t) => sum + t, 0) / this.responseTimes.length
+        : 0;
+
+    const uptimeMs = this.startedAt ? Date.now() - this.startedAt.getTime() : 0;
+
+    return {
+      promptCount: this.promptCount,
+      avgResponseTimeMs,
+      totalResponseChars: this.totalResponseChars,
+      estimatedTokens: Math.round(this.totalResponseChars / 4),
+      uptimeMs,
     };
   }
 
@@ -250,6 +388,30 @@ export class Session extends EventEmitter {
 
   getExitCode(): number | null {
     return this.exitCode;
+  }
+
+  getRetryCount(): number {
+    return this.retryCount;
+  }
+
+  getLastPrompt(): string | null {
+    return this.lastPrompt;
+  }
+
+  getConfig(): SessionConfig {
+    return this.config;
+  }
+
+  getRestartPolicy(): RestartPolicy {
+    return this.restartPolicy;
+  }
+
+  incrementRetryCount(): void {
+    this.retryCount++;
+  }
+
+  resetRetryCount(): void {
+    this.retryCount = 0;
   }
 
   // Legacy compatibility — not used in prompt mode

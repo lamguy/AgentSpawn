@@ -1,22 +1,36 @@
 import { Session } from './session.js';
 import { Registry } from './registry.js';
 import {
+  BroadcastResult,
+  SandboxOptions,
   SessionConfig,
   SessionInfo,
   SessionState,
   ManagerOptions,
   RegistryEntry,
+  SessionCrashedEvent,
 } from '../types.js';
-import { SessionAlreadyExistsError, SessionNotFoundError } from '../utils/errors.js';
+import { SessionAlreadyExistsError, SessionNotFoundError, SandboxNotAvailableError, SandboxStartError } from '../utils/errors.js';
+import { SandboxManager } from './sandbox.js';
+import { logger } from '../utils/logger.js';
+import { HistoryStore } from './history.js';
+import { calculateBackoff } from './restart-policy.js';
+import { PluginRunner } from './plugin-runner.js';
+import { EventEmitter } from 'node:events';
 import os from 'node:os';
 import path from 'node:path';
 
-export class SessionManager {
+export class SessionManager extends EventEmitter {
   private sessions: Map<string, Session> = new Map();
   private registryEntries: Map<string, RegistryEntry> = new Map();
-  private readonly registry: Registry;
+  readonly registry: Registry;
+  private readonly historyStore?: HistoryStore;
+  private pendingRestarts: Map<string, NodeJS.Timeout> = new Map();
+  private pluginRunner: PluginRunner = PluginRunner.empty();
 
   constructor(private readonly options?: ManagerOptions) {
+    super();
+    this.historyStore = options?.historyStore;
     let registryPath =
       options?.registryPath ?? path.join(os.homedir(), '.agentspawn', 'sessions.json');
 
@@ -25,46 +39,94 @@ export class SessionManager {
     }
 
     this.registry = new Registry(registryPath);
+
+    // Load plugins asynchronously; failures are non-fatal
+    PluginRunner.load(options?.pluginsConfigDir).then((runner) => {
+      this.pluginRunner = runner;
+    }).catch((err) => {
+      logger.warn(`Failed to load plugin runner: ${err instanceof Error ? err.message : String(err)}`);
+    });
   }
 
   async init(): Promise<void> {
-    const data = await this.registry.load();
+    await this.registry.withLock((data) => {
+      for (const [name, entry] of Object.entries(data.sessions)) {
+        if (entry.state === SessionState.Running && entry.pid > 0) {
+          let alive = false;
+          try {
+            process.kill(entry.pid, 0);
+            alive = true;
+          } catch {
+            alive = false;
+          }
 
-    for (const [name, entry] of Object.entries(data.sessions)) {
-      if (entry.state === SessionState.Running && entry.pid > 0) {
-        // Only check PID liveness for sessions with a real persistent process.
-        // Prompt-based sessions (pid === 0) have no persistent process to check.
-        let alive = false;
-        try {
-          process.kill(entry.pid, 0);
-          alive = true;
-        } catch {
-          alive = false;
-        }
-
-        if (!alive) {
-          entry.state = SessionState.Crashed;
-          data.sessions[name] = entry;
-          await this.registry.save(data);
+          if (!alive) {
+            logger.warn(`Detected crashed session "${name}" (pid ${entry.pid})`);
+            entry.state = SessionState.Crashed;
+          }
         }
       }
+    });
 
+    // Re-read after lock release to populate in-memory cache
+    const data = await this.registry.load();
+    for (const [name, entry] of Object.entries(data.sessions)) {
       this.registryEntries.set(name, entry);
     }
   }
 
-  async startSession(config: SessionConfig, claudeSessionId?: string, promptCount?: number): Promise<Session> {
+  async startSession(
+    config: SessionConfig,
+    claudeSessionId?: string,
+    promptCount?: number,
+    retryCount?: number,
+  ): Promise<Session> {
     if (this.sessions.has(config.name)) {
       throw new SessionAlreadyExistsError(config.name);
     }
 
-    const registryData = await this.registry.load();
-    if (registryData.sessions[config.name]) {
-      throw new SessionAlreadyExistsError(config.name);
-    }
+    let sandbox: SandboxManager | undefined;
+    if (config.sandboxed) {
+      const sandboxOptions: SandboxOptions = {
+        level: config.sandboxLevel,
+        image: config.sandboxImage,
+        memoryLimit: config.sandboxMemoryLimit,
+        cpuLimit: config.sandboxCpuLimit,
+      };
 
-    const session = new Session(config, this.options?.shutdownTimeoutMs, claudeSessionId, promptCount);
+      let backend = config.sandboxBackend ?? await SandboxManager.detectBackend();
+      if (!backend) throw new SandboxNotAvailableError();
+
+      sandbox = new SandboxManager(config.name, config.workingDirectory, backend, sandboxOptions);
+      try {
+        await sandbox.start();
+      } catch (e) {
+        if (backend === 'docker') {
+          // Docker failed — try platform-native backend as fallback
+          const fallback = await SandboxManager.detectPlatformNativeBackend();
+          if (fallback) {
+            logger.warn(
+              `Docker sandbox failed for session "${config.name}", falling back to ${fallback}: ${(e as Error).message}`,
+            );
+            backend = fallback;
+            sandbox = new SandboxManager(config.name, config.workingDirectory, fallback, sandboxOptions);
+            try {
+              await sandbox.start();
+            } catch (e2) {
+              throw new SandboxStartError(config.name, (e2 as Error).message);
+            }
+          } else {
+            throw new SandboxStartError(config.name, (e as Error).message);
+          }
+        } else {
+          throw new SandboxStartError(config.name, (e as Error).message);
+        }
+      }
+      config = { ...config, sandboxBackend: backend };
+    }
+    const session = new Session(config, this.options?.shutdownTimeoutMs, claudeSessionId, promptCount, retryCount, sandbox);
     await session.start();
+    logger.info(`Session "${config.name}" started in ${config.workingDirectory}`);
 
     const info = session.getInfo();
     const entry: RegistryEntry = {
@@ -77,10 +139,23 @@ export class SessionManager {
       claudeSessionId: session.getSessionId(),
       promptCount: info.promptCount,
       permissionMode: config.permissionMode,
+      restartPolicy: session.getRestartPolicy(),
+      tags: config.tags,
+      sandboxed: config.sandboxed,
+      sandboxBackend: config.sandboxBackend,
+      sandboxLevel: config.sandboxLevel,
+      sandboxImage: config.sandboxImage,
+      sandboxMemoryLimit: config.sandboxMemoryLimit,
+      sandboxCpuLimit: config.sandboxCpuLimit,
     };
 
     try {
-      await this.registry.addEntry(entry);
+      await this.registry.withLock((data) => {
+        if (data.sessions[config.name]) {
+          throw new SessionAlreadyExistsError(config.name);
+        }
+        data.sessions[config.name] = entry;
+      });
     } catch (err) {
       await session.stop();
       throw err;
@@ -88,17 +163,38 @@ export class SessionManager {
 
     this.sessions.set(config.name, session);
     this.registryEntries.set(config.name, entry);
+    this.wireHistoryRecording(session, config.name);
+    this.wireCrashHandling(session, config.name);
+    this.wirePluginEvents(session, config.name);
+
+    // Fire onStart plugin event (fire-and-forget)
+    this.pluginRunner.fire(config.name, 'onStart', {
+      workingDirectory: config.workingDirectory,
+    }).catch(() => { /* plugin failures are non-fatal */ });
 
     return session;
   }
 
   async stopSession(name: string): Promise<void> {
+    // Cancel any pending restart
+    const restartTimer = this.pendingRestarts.get(name);
+    if (restartTimer) {
+      clearTimeout(restartTimer);
+      this.pendingRestarts.delete(name);
+      logger.info(`Canceled pending restart for session "${name}"`);
+      this.emit('restartCanceled', name);
+    }
+
     const session = this.sessions.get(name);
     if (session) {
       await session.stop();
       await this.registry.removeEntry(name);
       this.sessions.delete(name);
       this.registryEntries.delete(name);
+      logger.info(`Session "${name}" stopped`);
+
+      // Fire onStop plugin event (fire-and-forget)
+      this.pluginRunner.fire(name, 'onStop', {}).catch(() => { /* plugin failures are non-fatal */ });
       return;
     }
 
@@ -134,6 +230,18 @@ export class SessionManager {
     }
   }
 
+  /**
+   * Stop all sessions that have the given tag.
+   * Returns the number of sessions stopped.
+   */
+  async stopByTag(tag: string): Promise<number> {
+    const toStop = this.listSessions().filter((s) => s.tags?.includes(tag));
+    for (const info of toStop) {
+      await this.stopSession(info.name);
+    }
+    return toStop.length;
+  }
+
   getSession(name: string): Session | undefined {
     return this.sessions.get(name);
   }
@@ -164,9 +272,40 @@ export class SessionManager {
       name: entry.name,
       workingDirectory: entry.workingDirectory,
       permissionMode: entry.permissionMode,
+      tags: entry.tags,
+      sandboxed: entry.sandboxed,
+      sandboxBackend: entry.sandboxBackend,
+      sandboxLevel: entry.sandboxLevel,
+      sandboxImage: entry.sandboxImage,
+      sandboxMemoryLimit: entry.sandboxMemoryLimit,
+      sandboxCpuLimit: entry.sandboxCpuLimit,
     };
 
     return this.startSession(config, entry.claudeSessionId, entry.promptCount);
+  }
+
+  private wireHistoryRecording(session: Session, sessionName: string): void {
+    if (!this.historyStore) return;
+
+    const store = this.historyStore;
+    let pendingPrompt: string | null = null;
+
+    session.on('promptStart', (prompt: string) => {
+      pendingPrompt = prompt;
+    });
+
+    session.on('promptComplete', (response: string) => {
+      if (pendingPrompt) {
+        const prompt = pendingPrompt;
+        pendingPrompt = null;
+        store.record(sessionName, {
+          prompt,
+          responsePreview: response,
+        }).catch((err) => {
+          logger.warn(`Failed to record history for session "${sessionName}": ${err}`);
+        });
+      }
+    });
   }
 
   /**
@@ -192,6 +331,10 @@ export class SessionManager {
         exitCode: entry.exitCode ?? null,
         promptCount: 0,
         permissionMode: entry.permissionMode,
+        tags: entry.tags,
+        sandboxed: entry.sandboxed,
+        sandboxBackend: entry.sandboxBackend,
+        sandboxLevel: entry.sandboxLevel,
       };
     }
 
@@ -234,6 +377,43 @@ export class SessionManager {
     }
   }
 
+  /**
+   * Send a prompt to multiple sessions concurrently and collect results.
+   * Uses Promise.allSettled so that a failure in one session never prevents
+   * the others from completing.
+   */
+  async broadcastPrompt(sessionNames: string[], prompt: string): Promise<BroadcastResult[]> {
+    const promises = sessionNames.map(async (name): Promise<BroadcastResult> => {
+      const session = this.sessions.get(name);
+      if (!session || session.getState() !== SessionState.Running) {
+        return {
+          sessionName: name,
+          status: 'rejected',
+          error: session ? `Session '${name}' is not running` : `Session '${name}' not found`,
+        };
+      }
+
+      const response = await session.sendPrompt(prompt);
+      return {
+        sessionName: name,
+        status: 'fulfilled',
+        response,
+      };
+    });
+
+    const settled = await Promise.allSettled(promises);
+    return settled.map((result, i) => {
+      if (result.status === 'fulfilled') {
+        return result.value;
+      }
+      return {
+        sessionName: sessionNames[i],
+        status: 'rejected' as const,
+        error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+      };
+    });
+  }
+
   listSessions(): SessionInfo[] {
     const results: SessionInfo[] = [];
     const seen = new Set<string>();
@@ -256,10 +436,191 @@ export class SessionManager {
           exitCode: entry.exitCode ?? null,
           promptCount: 0,
           permissionMode: entry.permissionMode,
+          tags: entry.tags,
+          sandboxed: entry.sandboxed,
+          sandboxBackend: entry.sandboxBackend,
+          sandboxLevel: entry.sandboxLevel,
         });
       }
     }
 
     return results;
+  }
+
+  /**
+   * Wire up crash event handling for a session.
+   * Listens to 'crashed' events and triggers restart logic if configured.
+   */
+  private wireCrashHandling(session: Session, sessionName: string): void {
+    session.on('crashed', (event: SessionCrashedEvent) => {
+      this.handleCrash(sessionName, event);
+    });
+  }
+
+  /**
+   * Wire up plugin event hooks for a session.
+   * Listens to session events and fires the corresponding plugins (fire-and-forget).
+   */
+  private wirePluginEvents(session: Session, sessionName: string): void {
+    let promptStartTime: number = 0;
+
+    session.on('promptStart', (prompt: string) => {
+      promptStartTime = Date.now();
+      this.pluginRunner.fire(sessionName, 'onPrompt', { prompt }).catch(() => {
+        // plugin failures are non-fatal
+      });
+    });
+
+    session.on('promptComplete', (response: string) => {
+      const responseTimeMs = promptStartTime > 0 ? Date.now() - promptStartTime : 0;
+      promptStartTime = 0;
+      this.pluginRunner.fire(sessionName, 'onResponse', { response, responseTimeMs }).catch(() => {
+        // plugin failures are non-fatal
+      });
+    });
+
+    session.on('crashed', (event: SessionCrashedEvent) => {
+      promptStartTime = 0;
+      this.pluginRunner.fire(sessionName, 'onCrash', {
+        exitCode: event.exitCode,
+        retryCount: event.retryCount,
+      }).catch(() => {
+        // plugin failures are non-fatal
+      });
+    });
+  }
+
+  /**
+   * Handle a session crash event and decide whether to restart.
+   */
+  private handleCrash(sessionName: string, event: SessionCrashedEvent): void {
+    // Bubble up crash event to TUI
+    this.emit('sessionCrashed', event);
+
+    const session = this.sessions.get(sessionName);
+    if (!session) {
+      logger.warn(`Cannot handle crash for session "${sessionName}": session not found`);
+      return;
+    }
+
+    const config = session.getConfig();
+    const restartPolicy = config.restartPolicy ?? { enabled: false, maxRetries: 3 };
+
+    // Check if restart policy is enabled
+    if (!restartPolicy.enabled) {
+      logger.info(`Restart policy disabled for session "${sessionName}", not restarting`);
+      return;
+    }
+
+    // Check if exit code is retryable
+    if (event.classification !== 'Retryable') {
+      logger.warn(
+        `Session "${sessionName}" crashed with non-retryable error: ${event.reason}, not restarting`,
+      );
+      return;
+    }
+
+    // Check if retry count exceeds max retries
+    if (event.retryCount >= restartPolicy.maxRetries) {
+      logger.error(
+        `Session "${sessionName}" exceeded max retries (${restartPolicy.maxRetries}), giving up`,
+      );
+      this.emit('retryLimitExceeded', sessionName, event);
+      return;
+    }
+
+    // Calculate backoff delay (options.backoffFn allows tests to inject instant restarts)
+    const backoffMs = this.options?.backoffFn
+      ? this.options.backoffFn(event.retryCount)
+      : calculateBackoff(event.retryCount);
+    const backoffUntil = new Date(Date.now() + backoffMs);
+
+    logger.info(
+      `Scheduling restart for session "${sessionName}" in ${backoffMs}ms (attempt ${event.retryCount + 1}/${restartPolicy.maxRetries})`,
+    );
+
+    // Update registry with crash state and backoff timestamp
+    this.updateRegistryForCrash(sessionName, event, backoffUntil).catch((err) => {
+      logger.error(`Failed to update registry for crashed session "${sessionName}": ${err}`);
+    });
+
+    // Schedule restart with exponential backoff
+    const timer = setTimeout(() => {
+      this.pendingRestarts.delete(sessionName);
+      this.restartSession(sessionName, event.promptText, event.retryCount + 1).catch((err) => {
+        logger.error(`Failed to restart session "${sessionName}": ${err}`);
+      });
+    }, backoffMs);
+
+    this.pendingRestarts.set(sessionName, timer);
+  }
+
+  /**
+   * Restart a crashed session by recreating it and optionally replaying the last prompt.
+   */
+  private async restartSession(
+    sessionName: string,
+    promptText: string | null,
+    retryCount: number,
+  ): Promise<void> {
+    logger.info(`Restarting session "${sessionName}" (retry ${retryCount})...`);
+
+    const session = this.sessions.get(sessionName);
+    if (!session) {
+      logger.warn(`Cannot restart session "${sessionName}": session not found`);
+      return;
+    }
+
+    // Extract config and state before stopping
+    const config = session.getConfig();
+    const claudeSessionId = session.getSessionId();
+    const promptCount = session.getInfo().promptCount;
+
+    // Stop and remove the crashed session
+    await session.stop();
+    this.sessions.delete(sessionName);
+    this.registryEntries.delete(sessionName);
+    await this.registry.removeEntry(sessionName);
+
+    // Create a new session with the same config and incremented retry count
+    try {
+      const newSession = await this.startSession(config, claudeSessionId, promptCount, retryCount);
+
+      logger.info(`Session "${sessionName}" restarted successfully`);
+      this.emit('sessionRestarted', sessionName, retryCount);
+
+      // Replay the prompt if the policy requests it
+      if (promptText && config.restartPolicy?.replayPrompt) {
+        logger.info(`Replaying prompt for session "${sessionName}"`);
+        try {
+          await newSession.sendPrompt(promptText);
+          logger.info(`Prompt replay completed for session "${sessionName}"`);
+        } catch (err) {
+          logger.error(`Failed to replay prompt for session "${sessionName}": ${err}`);
+          // Don't throw — the session is already restarted, just the prompt replay failed
+        }
+      }
+    } catch (err) {
+      logger.error(`Failed to restart session "${sessionName}": ${err}`);
+      throw err;
+    }
+  }
+
+  /**
+   * Update the registry with crash state and backoff timestamp.
+   */
+  private async updateRegistryForCrash(
+    sessionName: string,
+    event: SessionCrashedEvent,
+    backoffUntil: Date,
+  ): Promise<void> {
+    await this.registry.withLock((data) => {
+      const entry = data.sessions[sessionName];
+      if (entry) {
+        entry.state = SessionState.Crashed;
+        entry.exitCode = event.exitCode;
+        entry.backoffUntil = backoffUntil.toISOString();
+      }
+    });
   }
 }

@@ -87,13 +87,8 @@ const DESTRUCTIVE_IDS = new Set(['stop-session', 'stop-all']);
  *
  * Dismisses on Escape.
  */
-export function ActionMenu({
-  selectedIndex,
-  targetSessionName,
-  onSelect,
-  onNavigate,
-  onDismiss,
-}: ActionMenuProps): React.ReactElement {
+export function ActionMenu(props: ActionMenuProps): React.ReactElement {
+  const { selectedIndex, onSelect, onNavigate, onDismiss } = props;
   useInput((input, key) => {
     if (key.escape) {
       onDismiss();

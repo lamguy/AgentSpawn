@@ -1,4 +1,5 @@
 import type { Session } from '../core/session.js';
+import type { Logger } from '../utils/logger.js';
 import type { OutputLine, OutputCaptureConfig } from './types.js';
 
 /**
@@ -10,14 +11,35 @@ import type { OutputLine, OutputCaptureConfig } from './types.js';
 export class OutputCapture {
   private readonly buffers: Map<string, OutputLine[]> = new Map();
   private readonly listeners: Map<string, (() => void)[]> = new Map();
-  private readonly maxLinesPerSession: number;
+  private maxLinesPerSession: number;
+  private readonly maxTotalLines: number;
+  private readonly maxLineLength: number;
+  private readonly logger: Logger | undefined;
+  private totalLineCount: number = 0;
 
-  constructor(config?: OutputCaptureConfig) {
+  constructor(config?: OutputCaptureConfig, logger?: Logger) {
     this.maxLinesPerSession = config?.maxLinesPerSession ?? 1000;
+    this.logger = logger;
+
+    const rawMaxTotal = config?.maxTotalLines ?? 10000;
+    this.maxTotalLines = (rawMaxTotal === 0 || rawMaxTotal === Infinity) ? Infinity : rawMaxTotal;
+
+    const rawMaxLen = config?.maxLineLength ?? 10000;
+    this.maxLineLength = (rawMaxLen === 0 || rawMaxLen === Infinity) ? Infinity : rawMaxLen;
+
+    // Validate: global cap should not be less than per-session cap
+    if (this.maxTotalLines !== Infinity && this.maxTotalLines < this.maxLinesPerSession) {
+      this.logger?.warn(
+        `OutputCapture: maxTotalLines (${this.maxTotalLines}) is less than maxLinesPerSession (${this.maxLinesPerSession}), clamping maxLinesPerSession`,
+      );
+      this.maxLinesPerSession = this.maxTotalLines;
+    }
   }
 
   /**
    * Start capturing output from a session via its EventEmitter events.
+   *
+   * Listens to 'promptStart', 'data', 'promptComplete', 'promptError', and 'stderr'.
    */
   captureSession(sessionName: string, session: Session): void {
     if (this.listeners.has(sessionName)) {
@@ -46,10 +68,15 @@ export class OutputCapture {
       this.appendLine(sessionName, `Error: ${err.message}`, true);
     };
 
+    const onStderr = (chunk: string): void => {
+      this.appendLine(sessionName, chunk.trim(), true);
+    };
+
     session.on('promptStart', onPromptStart);
     session.on('data', onData);
     session.on('promptComplete', onPromptComplete);
     session.on('promptError', onPromptError);
+    session.on('stderr', onStderr);
 
     // Store cleanup functions
     const cleanups = [
@@ -57,6 +84,7 @@ export class OutputCapture {
       () => session.removeListener('data', onData),
       () => session.removeListener('promptComplete', onPromptComplete),
       () => session.removeListener('promptError', onPromptError),
+      () => session.removeListener('stderr', onStderr),
     ];
     this.listeners.set(sessionName, cleanups);
   }
@@ -80,18 +108,31 @@ export class OutputCapture {
   appendLine(sessionName: string, text: string, isError: boolean): void {
     const buffer = this.buffers.get(sessionName) ?? [];
 
+    // Truncate long lines
+    const finalText = this.maxLineLength !== Infinity && text.length > this.maxLineLength
+      ? text.slice(0, this.maxLineLength) + ' [truncated]'
+      : text;
+
     buffer.push({
       sessionName,
-      text,
+      text: finalText,
       timestamp: new Date(),
       isError,
     });
+    this.totalLineCount++;
 
+    // Per-session cap eviction
     if (buffer.length > this.maxLinesPerSession) {
       buffer.shift();
+      this.totalLineCount--;
     }
 
     this.buffers.set(sessionName, buffer);
+
+    // Global eviction (oldest-first across all sessions)
+    if (this.maxTotalLines !== Infinity) {
+      this.evictGlobalLines();
+    }
   }
 
   /**
@@ -105,6 +146,10 @@ export class OutputCapture {
    * Clear captured output for a specific session.
    */
   clearSession(sessionName: string): void {
+    const buffer = this.buffers.get(sessionName);
+    if (buffer) {
+      this.totalLineCount -= buffer.length;
+    }
     this.buffers.set(sessionName, []);
   }
 
@@ -113,6 +158,7 @@ export class OutputCapture {
    */
   clearAll(): void {
     this.buffers.clear();
+    this.totalLineCount = 0;
   }
 
   /**
@@ -126,7 +172,6 @@ export class OutputCapture {
    * Internal method to append raw output text, splitting into lines.
    */
   private appendOutput(sessionName: string, text: string, isError: boolean): void {
-    const buffer = this.buffers.get(sessionName) ?? [];
     const lines = text.split('\n');
 
     for (const line of lines) {
@@ -134,18 +179,45 @@ export class OutputCapture {
         continue;
       }
 
-      buffer.push({
-        sessionName,
-        text: line,
-        timestamp: new Date(),
-        isError,
-      });
+      this.appendLine(sessionName, line, isError);
+    }
+  }
 
-      if (buffer.length > this.maxLinesPerSession) {
-        buffer.shift();
+  /**
+   * Evict oldest lines across all sessions to stay within global limit.
+   */
+  private evictGlobalLines(): void {
+    let evicted = 0;
+
+    while (this.totalLineCount > this.maxTotalLines) {
+      // Find the session whose oldest line has the earliest timestamp
+      let oldestSession: string | null = null;
+      let oldestTime = Infinity;
+
+      for (const [name, buffer] of this.buffers) {
+        if (buffer.length > 0 && buffer[0].timestamp.getTime() < oldestTime) {
+          oldestTime = buffer[0].timestamp.getTime();
+          oldestSession = name;
+        }
+      }
+
+      if (!oldestSession) break;
+
+      const buffer = this.buffers.get(oldestSession)!;
+      buffer.shift();
+      this.totalLineCount--;
+      evicted++;
+
+      // If eviction emptied the buffer, remove from map (but not listeners)
+      if (buffer.length === 0) {
+        this.buffers.delete(oldestSession);
       }
     }
 
-    this.buffers.set(sessionName, buffer);
+    if (evicted > 0) {
+      this.logger?.warn(
+        `OutputCapture: evicted ${evicted} line(s) to stay within global limit of ${this.maxTotalLines}`,
+      );
+    }
   }
 }

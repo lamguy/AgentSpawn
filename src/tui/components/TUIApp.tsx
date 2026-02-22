@@ -3,14 +3,17 @@ import { Box, Text, useInput } from 'ink';
 import type { TUIState, TUIAction } from '../types.js';
 import { SessionListPane } from './SessionListPane.js';
 import { OutputPane } from './OutputPane.js';
+import { SplitPane } from './SplitPane.js';
 import { StatusBar } from './StatusBar.js';
 import { InputBar } from './InputBar.js';
 import { HelpOverlay } from './HelpOverlay.js';
 import { ActionMenu } from './ActionMenu.js';
 import { SessionCreationDialog } from './SessionCreationDialog.js';
 import { ConfirmationDialog } from './ConfirmationDialog.js';
+import { HistorySearchOverlay } from './HistorySearchOverlay.js';
 import { handleKeypress } from '../keybindings.js';
 import { topOverlay } from '../overlay-helpers.js';
+import { type KeybindingConfig, DEFAULT_KEYBINDINGS } from '../../config/keybindings.js';
 
 /**
  * TUIApp component props.
@@ -28,6 +31,8 @@ export interface TUIAppProps {
   onAction?: (action: TUIAction) => void;
   /** Whether a prompt is currently being processed */
   isProcessing?: boolean;
+  /** Resolved keybinding configuration (loaded from disk at startup) */
+  keybindings?: Required<KeybindingConfig>;
 }
 
 /**
@@ -46,6 +51,7 @@ export function TUIApp({
   onSendPrompt,
   onAction,
   isProcessing = false,
+  keybindings = DEFAULT_KEYBINDINGS,
 }: TUIAppProps): React.ReactElement {
   const [state, setState] = useState<TUIState>(initialState);
 
@@ -75,19 +81,25 @@ export function TUIApp({
         keyCode = '\x1b[A';
       } else if (key.downArrow) {
         keyCode = '\x1b[B';
+      } else if (key.leftArrow) {
+        keyCode = '\x1b[D';
+      } else if (key.rightArrow) {
+        keyCode = '\x1b[C';
       } else if (key.escape) {
         keyCode = '\x1b';
       } else if (key.ctrl && input === 'c') {
         keyCode = '\x03';
       } else if (key.ctrl && input === 'a') {
         keyCode = '\x01';
+      } else if (key.ctrl && input === 'r') {
+        keyCode = '\x12';
       } else if (key.delete || key.backspace) {
         keyCode = '\x7f';
       } else {
         keyCode = input;
       }
 
-      const result = handleKeypress(state, keyCode);
+      const result = handleKeypress(state, keyCode, keybindings);
 
       switch (result.kind) {
         case 'quit':
@@ -252,6 +264,15 @@ export function TUIApp({
             }}
           />
         );
+      case 'history-search':
+        return (
+          <HistorySearchOverlay
+            query={activeOverlay.query}
+            results={activeOverlay.results}
+            selectedIndex={activeOverlay.selectedIndex}
+            isLoading={activeOverlay.isLoading}
+          />
+        );
     }
   };
 
@@ -273,16 +294,50 @@ export function TUIApp({
               {' '}ATTACHED: {state.attachedSessionName}{' '}
             </Text>
           )}
+          {state.splitMode && (
+            <Text color="cyan" inverse bold>
+              {' '}SPLIT{' '}
+            </Text>
+          )}
         </Box>
         <Text dimColor>
-          {state.sessions.length} {state.sessions.length === 1 ? 'session' : 'sessions'}
+          {state.sessions.length + state.remoteSessions.length}{' '}
+          {state.sessions.length + state.remoteSessions.length === 1 ? 'session' : 'sessions'}
         </Text>
       </Box>
 
-      {/* Body: Overlay replaces content, or show two-column layout */}
+      {/* Body: Overlay replaces content, or show two-column / split layout */}
       {activeOverlay ? (
         <Box flexGrow={1} flexDirection="column" justifyContent="center" alignItems="center" paddingY={1}>
           {renderOverlay()}
+        </Box>
+      ) : state.splitMode ? (
+        <Box flexDirection="row" flexGrow={1}>
+          {/* Left column: Session list (narrower in split mode) */}
+          <Box
+            width="20%"
+            borderStyle="single"
+            borderRight
+            flexDirection="column"
+            paddingY={1}
+          >
+            <SessionListPane
+              sessions={state.sessions}
+              selectedSessionName={state.selectedSessionName}
+              attachedSessionName={state.attachedSessionName}
+              remoteSessions={state.remoteSessions}
+            />
+          </Box>
+
+          {/* Right: Split pane showing two sessions side by side */}
+          <Box width="80%" flexDirection="column">
+            <SplitPane
+              leftSession={state.sessions.find((s) => s.name === state.splitPaneSessions[0]) ?? null}
+              rightSession={state.sessions.find((s) => s.name === state.splitPaneSessions[1]) ?? null}
+              outputMap={state.splitOutputLines}
+              activePaneIndex={state.activePaneIndex}
+            />
+          </Box>
         </Box>
       ) : (
         <Box flexDirection="row" flexGrow={1}>
@@ -298,6 +353,7 @@ export function TUIApp({
               sessions={state.sessions}
               selectedSessionName={state.selectedSessionName}
               attachedSessionName={state.attachedSessionName}
+              remoteSessions={state.remoteSessions}
             />
           </Box>
 
@@ -317,6 +373,10 @@ export function TUIApp({
           isActive={isAttached}
           isProcessing={isProcessing}
           sessionName={state.attachedSessionName}
+          pendingInput={state.pendingInput}
+          onPendingInputConsumed={() => {
+            setState((prev) => ({ ...prev, pendingInput: null }));
+          }}
           onSubmit={(text) => {
             if (state.attachedSessionName && onSendPrompt) {
               onSendPrompt(state.attachedSessionName, text);

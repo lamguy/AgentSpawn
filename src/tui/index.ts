@@ -1,11 +1,17 @@
 import { render } from 'ink';
 import React from 'react';
 import type { SessionManager } from '../core/manager.js';
+import { RegistryWatcher } from '../core/registry-watcher.js';
+import type { HistoryStore } from '../core/history.js';
+import type { TemplateManager } from '../core/template.js';
 import type { Router } from '../io/router.js';
+import { logger } from '../utils/logger.js';
 import { SessionManagerAdapter, RouterAdapter } from './adapters.js';
 import { OutputCapture } from './output-capture.js';
-import type { TUIOptions, TUIState, TUIAction, StatusMessage } from './types.js';
+import type { TUIOptions, TUIState, TUIAction, StatusMessage, HistorySearchOverlayState, OutputLine } from './types.js';
 import { TUIApp } from './components/TUIApp.js';
+import { type KeybindingConfig, DEFAULT_KEYBINDINGS, loadKeybindings } from '../config/keybindings.js';
+import type { RemotePoller, RemoteSessionsEvent, RemoteErrorEvent } from './remote-poller.js';
 
 /** How long status messages persist before auto-clearing (ms). */
 const STATUS_MESSAGE_TTL = 5000;
@@ -16,8 +22,9 @@ const STATUS_MESSAGE_TTL = 5000;
 export class TUI {
   private state: TUIState;
   private renderInstance: ReturnType<typeof render> | null = null;
-  private updateInterval: NodeJS.Timeout | null = null;
+  private registryWatcher: RegistryWatcher | null = null;
   private resizeHandler: (() => void) | null = null;
+  private keybindings: Required<KeybindingConfig> = DEFAULT_KEYBINDINGS;
 
   constructor(
     private readonly manager: SessionManager,
@@ -25,7 +32,10 @@ export class TUI {
     private readonly managerAdapter: SessionManagerAdapter,
     private readonly routerAdapter: RouterAdapter,
     private readonly outputCapture: OutputCapture,
+    private readonly historyStore: HistoryStore | null,
+    private readonly templateManager: TemplateManager | null,
     private readonly options?: TUIOptions,
+    private readonly remotePoller?: RemotePoller,
   ) {
     const attachedSessionName = routerAdapter.getActiveSession() ?? null;
     this.state = {
@@ -38,6 +48,12 @@ export class TUI {
       mode: attachedSessionName ? 'attached' : 'navigation',
       overlayStack: [],
       statusMessage: null,
+      splitMode: false,
+      splitPaneSessions: [null, null],
+      activePaneIndex: 0,
+      splitOutputLines: new Map(),
+      remoteSessions: [],
+      remoteErrors: [],
     };
   }
 
@@ -48,9 +64,11 @@ export class TUI {
     return {
       initialState: this.state,
       isProcessing: this.state.isProcessing,
+      keybindings: this.keybindings,
       onStateChange: (newState: TUIState) => {
         const oldMode = this.state.mode;
         const newMode = newState.mode;
+        const oldSplitPanes = this.state.splitPaneSessions;
         this.state = newState;
 
         if (oldMode !== newMode) {
@@ -58,6 +76,22 @@ export class TUI {
             this.attachToSession(newState.attachedSessionName);
           } else if (newMode === 'navigation' && oldMode === 'attached') {
             this.detachFromSession();
+          }
+        }
+
+        // When split pane assignments change, ensure output is captured for new sessions
+        if (newState.splitMode) {
+          for (let i = 0; i < 2; i++) {
+            const sessionName = newState.splitPaneSessions[i];
+            if (sessionName && sessionName !== oldSplitPanes[i]) {
+              this.ensureSession(sessionName).then((session) => {
+                if (session) {
+                  this.outputCapture.captureSession(sessionName, session);
+                }
+              }).catch(() => {
+                // Non-fatal: output just won't be captured for this session
+              });
+            }
           }
         }
       },
@@ -82,16 +116,65 @@ export class TUI {
       React.createElement(TUIApp, this.buildAppProps()),
     );
 
-    // Periodic state updates
-    this.updateInterval = setInterval(() => {
+    // Load keybindings from disk asynchronously; re-render once loaded
+    loadKeybindings().then((kb) => {
+      this.keybindings = kb;
+      this.forceRerender();
+    }).catch(() => {
+      // Silently keep defaults if loading fails
+    });
+
+    // Watch registry for changes instead of fixed-interval polling
+    this.registryWatcher = new RegistryWatcher({
+      registryPath: this.manager.registry.getFilePath(),
+    });
+    this.registryWatcher.watch(() => {
       this.updateState();
-    }, 500);
+    });
 
     // Handle terminal resize
     this.resizeHandler = (): void => {
       this.forceRerender();
     };
     process.stdout.on('resize', this.resizeHandler);
+
+    // Start remote polling if a poller was provided
+    if (this.remotePoller) {
+      this.remotePoller.on('sessions', (event: RemoteSessionsEvent) => {
+        // Replace all entries for this alias with fresh data
+        const other = this.state.remoteSessions.filter(
+          (s) => s.remoteAlias !== event.alias,
+        );
+        this.state.remoteSessions = [...other, ...event.sessions];
+
+        // Clear any existing error for this alias (it's now reachable)
+        this.state.remoteErrors = this.state.remoteErrors.filter(
+          (e) => e.alias !== event.alias,
+        );
+
+        this.forceRerender();
+      });
+
+      this.remotePoller.on('remoteError', (event: RemoteErrorEvent) => {
+        // Drop stale sessions for this alias when it becomes unreachable
+        this.state.remoteSessions = this.state.remoteSessions.filter(
+          (s) => s.remoteAlias !== event.alias,
+        );
+
+        // Upsert the error entry
+        const without = this.state.remoteErrors.filter(
+          (e) => e.alias !== event.alias,
+        );
+        this.state.remoteErrors = [
+          ...without,
+          { alias: event.alias, error: event.error },
+        ];
+
+        this.forceRerender();
+      });
+
+      this.remotePoller.start();
+    }
   }
 
   /**
@@ -100,9 +183,9 @@ export class TUI {
   stop(): void {
     this.state.isShuttingDown = true;
 
-    if (this.updateInterval) {
-      clearInterval(this.updateInterval);
-      this.updateInterval = null;
+    if (this.registryWatcher) {
+      this.registryWatcher.unwatch();
+      this.registryWatcher = null;
     }
 
     if (this.resizeHandler) {
@@ -113,6 +196,13 @@ export class TUI {
     if (this.renderInstance) {
       this.renderInstance.unmount();
       this.renderInstance = null;
+    }
+
+    // Stop remote poller and close all tunnels
+    if (this.remotePoller) {
+      this.remotePoller.stop().catch(() => {
+        // Non-fatal — tunnels may already be closed
+      });
     }
   }
 
@@ -146,6 +236,17 @@ export class TUI {
       this.state.outputLines = [];
     }
 
+    // Update split-pane output if split mode is active
+    if (this.state.splitMode) {
+      const splitMap = new Map<string, OutputLine[]>();
+      for (const sessionName of this.state.splitPaneSessions) {
+        if (sessionName) {
+          splitMap.set(sessionName, this.outputCapture.getLines(sessionName));
+        }
+      }
+      this.state.splitOutputLines = splitMap;
+    }
+
     // Auto-clear expired status messages
     if (this.state.statusMessage && Date.now() > this.state.statusMessage.expiresAt) {
       this.state.statusMessage = null;
@@ -173,6 +274,9 @@ export class TUI {
       case 'create-session':
         this.handleCreateSession(action.name, action.directory, action.permissionMode);
         break;
+      case 'create-session-from-template':
+        this.handleCreateSessionFromTemplate(action.name, action.templateName, action.directory, action.permissionMode);
+        break;
       case 'stop-session':
         this.handleStopSession(action.sessionName);
         break;
@@ -185,18 +289,25 @@ export class TUI {
       case 'send-prompt':
         this.handleSendPrompt(action.sessionName, action.prompt);
         break;
+      case 'history-search-load':
+        this.handleHistorySearchLoad(action.sessionName, action.query);
+        break;
+      case 'history-insert':
+        this.handleHistoryInsert(action.prompt);
+        break;
     }
   }
 
   /**
    * Create a new session from the session-creation overlay.
    */
-  private async handleCreateSession(name: string, directory: string, permissionMode: string): Promise<void> {
+  private async handleCreateSession(name: string, directory: string, permissionMode: string, env?: Record<string, string>): Promise<void> {
     try {
       const session = await this.manager.startSession({
         name,
         workingDirectory: directory || process.cwd(),
         permissionMode: permissionMode || 'bypassPermissions',
+        env,
       });
       this.outputCapture.captureSession(name, session);
 
@@ -204,6 +315,7 @@ export class TUI {
       this.state.overlayStack = [];
       this.state.selectedSessionName = name;
       this.setStatusMessage(`Session "${name}" created`, 'success');
+      this.registryWatcher?.notifyWrite();
       this.forceRerender();
     } catch (err) {
       // Show error in the session-creation overlay
@@ -229,12 +341,46 @@ export class TUI {
   }
 
   /**
+   * Create a new session from a template, merging template values with form fields.
+   * Form fields override template values when non-empty/non-default.
+   */
+  private async handleCreateSessionFromTemplate(
+    name: string,
+    templateName: string,
+    directory: string,
+    permissionMode: string,
+  ): Promise<void> {
+    if (!this.templateManager) {
+      this.setStatusMessage('Template manager not available', 'error');
+      this.forceRerender();
+      return;
+    }
+
+    try {
+      const template = await this.templateManager.get(templateName);
+
+      // Merge: form fields override template values when non-empty/non-default
+      const mergedDirectory = (directory && directory !== '.') ? directory : (template.workingDirectory ?? '.');
+      const mergedPermissionMode = (permissionMode && permissionMode !== 'bypassPermissions')
+        ? permissionMode
+        : (template.permissionMode ?? 'bypassPermissions');
+
+      await this.handleCreateSession(name, mergedDirectory, mergedPermissionMode, template.env);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : `Template "${templateName}" not found`;
+      this.setStatusMessage(message, 'error');
+      this.forceRerender();
+    }
+  }
+
+  /**
    * Stop a session.
    */
   private async handleStopSession(sessionName: string): Promise<void> {
     try {
       await this.manager.stopSession(sessionName);
       this.setStatusMessage(`Session "${sessionName}" stopped`, 'success');
+      this.registryWatcher?.notifyWrite();
     } catch (err) {
       this.setStatusMessage(
         err instanceof Error ? err.message : `Failed to stop "${sessionName}"`,
@@ -263,6 +409,7 @@ export class TUI {
       });
       this.outputCapture.captureSession(sessionName, session);
       this.setStatusMessage(`Session "${sessionName}" restarted`, 'success');
+      this.registryWatcher?.notifyWrite();
     } catch (err) {
       this.setStatusMessage(
         err instanceof Error ? err.message : `Failed to restart "${sessionName}"`,
@@ -279,12 +426,69 @@ export class TUI {
     try {
       await this.manager.stopAll();
       this.setStatusMessage('All sessions stopped', 'success');
+      this.registryWatcher?.notifyWrite();
     } catch (err) {
       this.setStatusMessage(
         err instanceof Error ? err.message : 'Failed to stop all sessions',
         'error',
       );
     }
+    this.forceRerender();
+  }
+
+  /**
+   * Handle history search: query the HistoryStore and update overlay results.
+   */
+  private async handleHistorySearchLoad(sessionName: string | undefined, query: string): Promise<void> {
+    if (!this.historyStore) {
+      // No history store available — clear loading state
+      const top = this.state.overlayStack[this.state.overlayStack.length - 1];
+      if (top?.kind === 'history-search') {
+        this.state.overlayStack = [
+          ...this.state.overlayStack.slice(0, -1),
+          { ...top, isLoading: false, results: [] },
+        ];
+      }
+      this.forceRerender();
+      return;
+    }
+
+    try {
+      const results = query.length > 0
+        ? await this.historyStore.search(query, { sessionName, limit: 50 })
+        : [];
+
+      const top = this.state.overlayStack[this.state.overlayStack.length - 1];
+      if (top?.kind === 'history-search') {
+        this.state.overlayStack = [
+          ...this.state.overlayStack.slice(0, -1),
+          {
+            ...top,
+            results,
+            isLoading: false,
+            selectedIndex: 0,
+          } satisfies HistorySearchOverlayState,
+        ];
+      }
+    } catch (err) {
+      logger.warn(`History search failed: ${err instanceof Error ? err.message : String(err)}`);
+      const top = this.state.overlayStack[this.state.overlayStack.length - 1];
+      if (top?.kind === 'history-search') {
+        this.state.overlayStack = [
+          ...this.state.overlayStack.slice(0, -1),
+          { ...top, isLoading: false, results: [] },
+        ];
+      }
+    }
+
+    this.forceRerender();
+  }
+
+  /**
+   * Handle history insert: set pendingInput so InputBar picks it up.
+   */
+  private handleHistoryInsert(prompt: string): void {
+    this.state.pendingInput = prompt;
     this.forceRerender();
   }
 
@@ -374,14 +578,16 @@ export class TUI {
 export function launchTUI(
   manager: SessionManager,
   router: Router,
-  options?: TUIOptions,
+  options?: TUIOptions & { historyStore?: HistoryStore; templateManager?: TemplateManager; remotePoller?: RemotePoller },
 ): TUI {
   const managerAdapter = new SessionManagerAdapter(manager);
   const routerAdapter = new RouterAdapter(router);
 
   const outputCapture = new OutputCapture({
     maxLinesPerSession: 1000,
-  });
+    maxTotalLines: 10000,
+    maxLineLength: 10000,
+  }, logger);
 
   const tui = new TUI(
     manager,
@@ -389,7 +595,10 @@ export function launchTUI(
     managerAdapter,
     routerAdapter,
     outputCapture,
+    options?.historyStore ?? null,
+    options?.templateManager ?? null,
     options,
+    options?.remotePoller,
   );
   tui.start();
 

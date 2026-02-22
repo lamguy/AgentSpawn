@@ -30,6 +30,7 @@ function createMockSession(name: string, options?: { handleNull?: boolean }): Se
     startedAt: new Date(),
     workingDirectory: '/tmp/work',
     exitCode: null,
+    promptCount: 0,
   };
 
   const session = {
@@ -93,7 +94,7 @@ describe('Router', () => {
 
   it('stdin data flows to attached session stdin', () => {
     const session = createMockSession('test-session');
-    const handle = session.getHandle();
+    const handle = session.getHandle() as SessionHandle | null;
     expect(handle).not.toBeNull();
 
     const stdinSpy = vi.fn();
@@ -110,7 +111,7 @@ describe('Router', () => {
 
   it('stdin stops flowing after detach', () => {
     const session = createMockSession('test-session');
-    const handle = session.getHandle();
+    const handle = session.getHandle() as SessionHandle | null;
     expect(handle).not.toBeNull();
 
     const stdinSpy = vi.fn();
@@ -147,7 +148,7 @@ describe('Router', () => {
 
   it('cleans up all listeners on detach', () => {
     const session = createMockSession('cleanup-test');
-    const handle = session.getHandle();
+    const handle = session.getHandle() as SessionHandle | null;
     expect(handle).not.toBeNull();
 
     router.attach(session);

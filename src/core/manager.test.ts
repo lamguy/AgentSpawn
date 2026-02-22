@@ -11,6 +11,7 @@ import { EventEmitter } from 'node:events';
 
 vi.mock('node:child_process', () => ({
   spawn: vi.fn(),
+  execFile: vi.fn(),
 }));
 
 const mockedSpawn = vi.mocked(childProcess.spawn);
@@ -81,7 +82,7 @@ describe('SessionManager', () => {
     await fs.writeFile(registryPath, JSON.stringify(data, null, 2), 'utf-8');
 
     const originalKill = process.kill;
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     const killMock = vi.fn((_pid: number, _signal?: string | number) => {
       const err = new Error('kill ESRCH') as NodeJS.ErrnoException;
       err.code = 'ESRCH';
@@ -220,7 +221,7 @@ describe('SessionManager', () => {
     await fs.writeFile(registryPath, JSON.stringify(data, null, 2), 'utf-8');
 
     const originalKill = process.kill;
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     const killMock = vi.fn((_pid: number, _signal?: string | number) => {
       return true;
     });
@@ -545,6 +546,574 @@ describe('SessionManager', () => {
 
       await manager.refreshRegistry();
       expect(manager.listSessions()).toHaveLength(0);
+    });
+  });
+
+  describe('broadcastPrompt()', () => {
+    it('should send prompt to all listed sessions concurrently', async () => {
+      await manager.init();
+      const sessionA = await manager.startSession({ name: 'a', workingDirectory: '/tmp/a' });
+      const sessionB = await manager.startSession({ name: 'b', workingDirectory: '/tmp/b' });
+
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      // Mock sendPrompt on both sessions to resolve immediately
+      const sendA = vi.spyOn(sessionA, 'sendPrompt').mockResolvedValue('response-a');
+      const sendB = vi.spyOn(sessionB, 'sendPrompt').mockResolvedValue('response-b');
+
+      const results = await manager.broadcastPrompt(['a', 'b'], 'hello');
+
+      expect(sendA).toHaveBeenCalledWith('hello');
+      expect(sendB).toHaveBeenCalledWith('hello');
+      expect(results).toHaveLength(2);
+      expect(results).toEqual(
+        expect.arrayContaining([
+          { sessionName: 'a', status: 'fulfilled', response: 'response-a' },
+          { sessionName: 'b', status: 'fulfilled', response: 'response-b' },
+        ]),
+      );
+    });
+
+    it('should return rejected result for sessions not found', async () => {
+      await manager.init();
+
+      const results = await manager.broadcastPrompt(['nonexistent'], 'hello');
+
+      expect(results).toHaveLength(1);
+      expect(results[0]).toEqual({
+        sessionName: 'nonexistent',
+        status: 'rejected',
+        error: "Session 'nonexistent' not found",
+      });
+    });
+
+    it('should return rejected result for sessions not running', async () => {
+      await manager.init();
+      const session = await manager.startSession({ name: 'stopped-one', workingDirectory: '/tmp/s' });
+      await session.stop();
+
+      const results = await manager.broadcastPrompt(['stopped-one'], 'hello');
+
+      expect(results).toHaveLength(1);
+      expect(results[0]).toEqual({
+        sessionName: 'stopped-one',
+        status: 'rejected',
+        error: "Session 'stopped-one' is not running",
+      });
+    });
+
+    it('should return rejected result for sessions that throw during sendPrompt', async () => {
+      await manager.init();
+      const session = await manager.startSession({ name: 'error-session', workingDirectory: '/tmp/e' });
+
+      vi.spyOn(session, 'sendPrompt').mockRejectedValue(new Error('Claude crashed'));
+
+      const results = await manager.broadcastPrompt(['error-session'], 'hello');
+
+      expect(results).toHaveLength(1);
+      expect(results[0]).toEqual({
+        sessionName: 'error-session',
+        status: 'rejected',
+        error: 'Claude crashed',
+      });
+    });
+
+    it('should return empty results for empty session array', async () => {
+      await manager.init();
+
+      const results = await manager.broadcastPrompt([], 'hello');
+
+      expect(results).toEqual([]);
+    });
+
+    it('should handle mixed success and failure across sessions', async () => {
+      await manager.init();
+      const sessionOk = await manager.startSession({ name: 'ok', workingDirectory: '/tmp/ok' });
+      const sessionFail = await manager.startSession({ name: 'fail', workingDirectory: '/tmp/fail' });
+
+      vi.spyOn(sessionOk, 'sendPrompt').mockResolvedValue('success');
+      vi.spyOn(sessionFail, 'sendPrompt').mockRejectedValue(new Error('boom'));
+
+      const results = await manager.broadcastPrompt(['ok', 'fail', 'ghost'], 'test');
+
+      expect(results).toHaveLength(3);
+
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      const rejected = results.filter((r) => r.status === 'rejected');
+
+      expect(fulfilled).toHaveLength(1);
+      expect(fulfilled[0].sessionName).toBe('ok');
+      expect(fulfilled[0].response).toBe('success');
+
+      expect(rejected).toHaveLength(2);
+      const rejectedNames = rejected.map((r) => r.sessionName).sort();
+      expect(rejectedNames).toEqual(['fail', 'ghost']);
+    });
+  });
+
+  describe('session auto-restart', () => {
+    // Helper: wait for sessionRestarted event with a 2s safety timeout.
+    const waitForRestart = (): Promise<void> =>
+      new Promise<void>((resolve, reject) => {
+        const t = setTimeout(
+          () => reject(new Error('Timed out waiting for sessionRestarted event')),
+          2000,
+        );
+        manager.once('sessionRestarted', () => {
+          clearTimeout(t);
+          resolve();
+        });
+      });
+
+    beforeEach(() => {
+      // Re-create manager with backoffFn: () => 0 so restarts happen in the next
+      // event-loop tick rather than after 1000ms+. This lets tests use real timers
+      // and await the sessionRestarted event instead of advancing fake timers.
+      //
+      // Also spy on registry.withLock to make it a synchronous no-op, avoiding
+      // proper-lockfile's internal setTimeout usage which would otherwise compete
+      // with real file I/O during restartSession.
+      manager = new SessionManager({ registryPath, backoffFn: () => 0 });
+      vi.spyOn(manager.registry, 'withLock').mockResolvedValue(undefined);
+    });
+
+    afterEach(async () => {
+      // Cancel pending restart timers so they don't bleed into the next test.
+      await manager.stopAll().catch(() => {});
+      vi.restoreAllMocks();
+    });
+
+    it('should emit sessionCrashed event when a session crashes', async () => {
+      await manager.init();
+
+      const config: SessionConfig = {
+        name: 'crash-test',
+        workingDirectory: '/tmp/crash',
+        restartPolicy: { enabled: true, maxRetries: 3 },
+      };
+
+      const session = await manager.startSession(config);
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const crashHandler = vi.fn();
+      manager.on('sessionCrashed', crashHandler);
+
+      const p = session.sendPrompt('test');
+      mockChild.emit('close', 1, null);
+
+      await expect(p).rejects.toThrow();
+
+      expect(crashHandler).toHaveBeenCalledTimes(1);
+      expect(crashHandler.mock.calls[0][0]).toMatchObject({
+        sessionName: 'crash-test',
+        exitCode: 1,
+        classification: 'Retryable',
+        retryCount: 0,
+      });
+    });
+
+    it('should schedule restart after retryable crash', async () => {
+      await manager.init();
+
+      const config: SessionConfig = {
+        name: 'retry-session',
+        workingDirectory: '/tmp/retry',
+        restartPolicy: { enabled: true, maxRetries: 3 },
+      };
+
+      const session = await manager.startSession(config);
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const restartHandler = vi.fn();
+      manager.on('sessionRestarted', restartHandler);
+
+      const p = session.sendPrompt('failing prompt');
+      mockChild.emit('close', 1, null);
+      await expect(p).rejects.toThrow();
+
+      await waitForRestart();
+
+      expect(restartHandler).toHaveBeenCalledWith('retry-session', 1);
+    });
+
+    it('should not restart when policy is disabled', async () => {
+      await manager.init();
+
+      const config: SessionConfig = {
+        name: 'no-restart',
+        workingDirectory: '/tmp/no-restart',
+        restartPolicy: { enabled: false, maxRetries: 3 },
+      };
+
+      const session = await manager.startSession(config);
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const restartHandler = vi.fn();
+      manager.on('sessionRestarted', restartHandler);
+
+      const p = session.sendPrompt('test');
+      mockChild.emit('close', 1, null);
+      await expect(p).rejects.toThrow();
+
+      // Brief pause — no restart should fire even with backoffFn: () => 0
+      await new Promise((r) => setTimeout(r, 20));
+      expect(restartHandler).not.toHaveBeenCalled();
+    });
+
+    it('should not restart on permanent failure', async () => {
+      await manager.init();
+
+      const config: SessionConfig = {
+        name: 'permanent-fail',
+        workingDirectory: '/tmp/perm',
+        restartPolicy: { enabled: true, maxRetries: 3 },
+      };
+
+      const session = await manager.startSession(config);
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const restartHandler = vi.fn();
+      manager.on('sessionRestarted', restartHandler);
+
+      const p = session.sendPrompt('test');
+      mockChild.emit('close', 127, null); // Command not found - permanent
+      await expect(p).rejects.toThrow();
+
+      await new Promise((r) => setTimeout(r, 20));
+      expect(restartHandler).not.toHaveBeenCalled();
+    });
+
+    it('should emit retryLimitExceeded when max retries reached', async () => {
+      await manager.init();
+
+      const config: SessionConfig = {
+        name: 'max-retry',
+        workingDirectory: '/tmp/max',
+        restartPolicy: { enabled: true, maxRetries: 2 },
+      };
+
+      // Start session with retry count already at limit
+      const session = await manager.startSession(config, undefined, undefined, 2);
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const limitHandler = vi.fn();
+      const restartHandler = vi.fn();
+      manager.on('retryLimitExceeded', limitHandler);
+      manager.on('sessionRestarted', restartHandler);
+
+      const p = session.sendPrompt('test');
+      mockChild.emit('close', 1, null);
+      await expect(p).rejects.toThrow();
+
+      await new Promise((r) => setTimeout(r, 20));
+      expect(limitHandler).toHaveBeenCalledWith('max-retry', expect.any(Object));
+      expect(restartHandler).not.toHaveBeenCalled();
+    });
+
+    it('should cancel pending restart when session is stopped', async () => {
+      await manager.init();
+
+      const config: SessionConfig = {
+        name: 'cancel-restart',
+        workingDirectory: '/tmp/cancel',
+        restartPolicy: { enabled: true, maxRetries: 3 },
+      };
+
+      const session = await manager.startSession(config);
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const cancelHandler = vi.fn();
+      manager.on('restartCanceled', cancelHandler);
+
+      const p = session.sendPrompt('test');
+      mockChild.emit('close', 1, null);
+      await expect(p).rejects.toThrow();
+
+      // stopSession calls clearTimeout synchronously before any await, so the
+      // 0ms restart timer is cancelled before the event loop can fire it.
+      await manager.stopSession('cancel-restart');
+
+      expect(cancelHandler).toHaveBeenCalledWith('cancel-restart');
+
+      // Give time for any errant restart to fire and verify it doesn't
+      await new Promise((r) => setTimeout(r, 20));
+      expect(manager.getSession('cancel-restart')).toBeUndefined();
+    });
+
+    it('should preserve claudeSessionId and promptCount on restart', async () => {
+      await manager.init();
+
+      const config: SessionConfig = {
+        name: 'preserve-id',
+        workingDirectory: '/tmp/preserve',
+        restartPolicy: { enabled: true, maxRetries: 3 },
+      };
+
+      const session = await manager.startSession(config);
+      const originalSessionId = session.getSessionId();
+
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const p1 = session.sendPrompt('crash me');
+      mockChild.emit('close', 1, null);
+      await expect(p1).rejects.toThrow();
+
+      await waitForRestart();
+
+      const newSession = manager.getSession('preserve-id');
+      expect(newSession).toBeDefined();
+      expect(newSession?.getSessionId()).toBe(originalSessionId);
+    });
+
+    it('should replay last prompt on restart when replayPrompt is true', async () => {
+      await manager.init();
+
+      const config: SessionConfig = {
+        name: 'replay-prompt',
+        workingDirectory: '/tmp/replay',
+        restartPolicy: { enabled: true, maxRetries: 3, replayPrompt: true },
+      };
+
+      const session = await manager.startSession(config);
+
+      const mockChild1 = createMockChild(42);
+      const mockChild2 = createMockChild(43);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValueOnce(mockChild1 as any).mockReturnValueOnce(mockChild2 as any);
+
+      const p1 = session.sendPrompt('important prompt');
+      mockChild1.emit('close', 1, null);
+      await expect(p1).rejects.toThrow();
+
+      // sessionRestarted fires before the replay sendPrompt is awaited;
+      // EventEmitter.emit is synchronous so stdin.write is called in the same tick.
+      await waitForRestart();
+
+      expect(mockChild2.stdin.write).toHaveBeenCalledWith('important prompt');
+    });
+
+    it('should call backoffFn with increasing attempt numbers on repeated crashes', async () => {
+      await manager.init();
+
+      // Use a spy backoffFn so we can verify the attempt argument
+      const backoffAttempts: number[] = [];
+      manager = new SessionManager({
+        registryPath,
+        backoffFn: (attempt) => {
+          backoffAttempts.push(attempt);
+          return 0;
+        },
+      });
+      vi.spyOn(manager.registry, 'withLock').mockResolvedValue(undefined);
+      await manager.init();
+
+      const config: SessionConfig = {
+        name: 'backoff-test',
+        workingDirectory: '/tmp/backoff',
+        restartPolicy: { enabled: true, maxRetries: 5 },
+      };
+
+      const session = await manager.startSession(config);
+      // Use separate mocks so that each sendPrompt gets its own child process object.
+      // Reusing a single mockChild would cause the first sendPrompt's 'close' listener
+      // to fire again on the second emit, triggering a spurious extra crash/restart.
+      const mockChild1 = createMockChild(42);
+      const mockChild2 = createMockChild(43);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValueOnce(mockChild1 as any).mockReturnValueOnce(mockChild2 as any);
+
+      // First crash → attempt 0
+      const p1 = session.sendPrompt('crash 1');
+      mockChild1.emit('close', 1, null);
+      await expect(p1).rejects.toThrow();
+      await waitForRestart();
+
+      const newSession = manager.getSession('backoff-test');
+      expect(newSession).toBeDefined();
+      expect(newSession?.getRetryCount()).toBe(1);
+
+      // Second crash → attempt 1
+      const p2 = newSession!.sendPrompt('crash 2');
+      mockChild2.emit('close', 1, null);
+      await expect(p2).rejects.toThrow();
+      await waitForRestart();
+
+      const finalSession = manager.getSession('backoff-test');
+      expect(finalSession).toBeDefined();
+      expect(finalSession?.getRetryCount()).toBe(2);
+
+      // Verify backoffFn was called with increasing attempt numbers
+      expect(backoffAttempts[0]).toBe(0);
+      expect(backoffAttempts[1]).toBe(1);
+    });
+
+  });
+
+  it('startSession() persists restartPolicy in registry', async () => {
+    await manager.init();
+
+    const config: SessionConfig = {
+      name: 'persist-policy',
+      workingDirectory: '/tmp/policy',
+      restartPolicy: { enabled: true, maxRetries: 5 },
+    };
+
+    await manager.startSession(config);
+
+    const raw = await fs.readFile(registryPath, 'utf-8');
+    const data = JSON.parse(raw);
+
+    expect(data.sessions['persist-policy'].restartPolicy).toEqual({
+      enabled: true,
+      maxRetries: 5,
+    });
+  });
+
+  describe('session tagging', () => {
+    it('startSession() persists tags in registry', async () => {
+      await manager.init();
+
+      await manager.startSession({
+        name: 'tagged-session',
+        workingDirectory: '/tmp/tagged',
+        tags: ['bug', 'urgent'],
+      });
+
+      const raw = await fs.readFile(registryPath, 'utf-8');
+      const data = JSON.parse(raw);
+      expect(data.sessions['tagged-session'].tags).toEqual(['bug', 'urgent']);
+    });
+
+    it('getInfo() returns tags from in-memory session', async () => {
+      await manager.init();
+
+      await manager.startSession({
+        name: 'tag-info-session',
+        workingDirectory: '/tmp/tag-info',
+        tags: ['feature'],
+      });
+
+      const info = manager.getSessionInfo('tag-info-session');
+      expect(info?.tags).toEqual(['feature']);
+    });
+
+    it('listSessions() returns tags for in-memory sessions', async () => {
+      await manager.init();
+
+      await manager.startSession({ name: 'a', workingDirectory: '/tmp/a', tags: ['bug'] });
+      await manager.startSession({ name: 'b', workingDirectory: '/tmp/b', tags: ['feature'] });
+      await manager.startSession({ name: 'c', workingDirectory: '/tmp/c' });
+
+      const sessions = manager.listSessions();
+      const a = sessions.find((s) => s.name === 'a');
+      const b = sessions.find((s) => s.name === 'b');
+      const c = sessions.find((s) => s.name === 'c');
+
+      expect(a?.tags).toEqual(['bug']);
+      expect(b?.tags).toEqual(['feature']);
+      expect(c?.tags).toBeUndefined();
+    });
+
+    it('listSessions() returns tags from registry-only sessions', async () => {
+      const dir = path.dirname(registryPath);
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(
+        registryPath,
+        JSON.stringify({
+          version: 1,
+          sessions: {
+            'registry-tagged': {
+              name: 'registry-tagged',
+              pid: 0,
+              state: 'running',
+              startedAt: new Date().toISOString(),
+              workingDirectory: '/tmp/reg-tagged',
+              exitCode: null,
+              tags: ['release'],
+            },
+          },
+        }),
+      );
+
+      await manager.init();
+
+      const sessions = manager.listSessions();
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0].tags).toEqual(['release']);
+    });
+
+    it('stopByTag() stops all sessions with that tag', async () => {
+      await manager.init();
+
+      await manager.startSession({ name: 'bug-1', workingDirectory: '/tmp/b1', tags: ['bug', 'urgent'] });
+      await manager.startSession({ name: 'bug-2', workingDirectory: '/tmp/b2', tags: ['bug'] });
+      await manager.startSession({ name: 'feat-1', workingDirectory: '/tmp/f1', tags: ['feature'] });
+
+      const stopped = await manager.stopByTag('bug');
+
+      expect(stopped).toBe(2);
+      expect(manager.listSessions()).toHaveLength(1);
+      expect(manager.listSessions()[0].name).toBe('feat-1');
+    });
+
+    it('stopByTag() returns 0 when no sessions match', async () => {
+      await manager.init();
+
+      await manager.startSession({ name: 'session-a', workingDirectory: '/tmp/sa', tags: ['feature'] });
+
+      const stopped = await manager.stopByTag('nonexistent-tag');
+      expect(stopped).toBe(0);
+      expect(manager.listSessions()).toHaveLength(1);
+    });
+
+    it('stopByTag() does nothing when there are no sessions', async () => {
+      await manager.init();
+
+      const stopped = await manager.stopByTag('urgent');
+      expect(stopped).toBe(0);
+    });
+
+    it('adoptSession() preserves tags from registry', async () => {
+      const data = {
+        version: 1,
+        sessions: {
+          'adopt-tagged': {
+            name: 'adopt-tagged',
+            pid: 0,
+            state: 'stopped',
+            startedAt: new Date().toISOString(),
+            workingDirectory: '/tmp/adopt-tag',
+            exitCode: null,
+            claudeSessionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+            promptCount: 1,
+            tags: ['bug', 'v2'],
+          },
+        },
+      };
+      const dir = path.dirname(registryPath);
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(registryPath, JSON.stringify(data, null, 2), 'utf-8');
+
+      await manager.init();
+
+      const adopted = await manager.adoptSession('adopt-tagged');
+      expect(adopted.getInfo().tags).toEqual(['bug', 'v2']);
     });
   });
 });

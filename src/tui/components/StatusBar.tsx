@@ -23,6 +23,7 @@ interface ShortcutDef {
 function getModeBadge(
   mode: TUIState['mode'],
   topOverlay: OverlayState | null,
+  splitMode: boolean,
 ): { label: string; bgColor?: string; fgColor: string } {
   // Overlay takes priority over base mode
   if (topOverlay) {
@@ -36,6 +37,10 @@ function getModeBadge(
       case 'confirmation':
         return { label: ' CONFIRM ', bgColor: 'yellow', fgColor: 'black' };
     }
+  }
+
+  if (splitMode) {
+    return { label: ' SPLIT ', bgColor: 'cyan', fgColor: 'black' };
   }
 
   switch (mode) {
@@ -53,6 +58,7 @@ function getModeBadge(
 function getShortcuts(
   mode: TUIState['mode'],
   topOverlay: OverlayState | null,
+  splitMode: boolean,
 ): ShortcutDef[] {
   if (topOverlay) {
     switch (topOverlay.kind) {
@@ -81,6 +87,16 @@ function getShortcuts(
     }
   }
 
+  if (splitMode) {
+    return [
+      { key: 'Tab', action: 'next session' },
+      { key: 'Enter', action: 'assign pane' },
+      { key: '[/]', action: 'switch pane' },
+      { key: 'v', action: 'exit split' },
+      { key: '?', action: 'help' },
+    ];
+  }
+
   switch (mode) {
     case 'attached':
       return [
@@ -92,6 +108,7 @@ function getShortcuts(
       return [
         { key: 'Tab', action: 'next' },
         { key: 'Enter', action: 'attach' },
+        { key: 'v', action: 'split' },
         { key: 'n', action: 'new' },
         { key: 'x', action: 'stop' },
         { key: '?', action: 'help' },
@@ -144,8 +161,8 @@ export function StatusBar({
       ? state.overlayStack[state.overlayStack.length - 1]
       : null;
 
-  const badge = getModeBadge(state.mode, topOverlay);
-  const shortcuts = getShortcuts(state.mode, topOverlay);
+  const badge = getModeBadge(state.mode, topOverlay, state.splitMode);
+  const shortcuts = getShortcuts(state.mode, topOverlay, state.splitMode);
 
   // Check for active (non-expired) status message
   const statusMessage =
@@ -158,6 +175,9 @@ export function StatusBar({
     sessionCount === 0
       ? 'no sessions'
       : `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`;
+
+  // Remote error summary (if any remotes are unreachable)
+  const remoteErrors = state.remoteErrors ?? [];
 
   return (
     <Box flexDirection="row" justifyContent="space-between" paddingX={1}>
@@ -191,6 +211,17 @@ export function StatusBar({
                 </Text>
                 <Text dimColor> {action}</Text>
               </Box>
+            ))}
+          </Box>
+        )}
+
+        {/* Remote error warnings */}
+        {remoteErrors.length > 0 && (
+          <Box flexDirection="row" gap={0} marginLeft={2}>
+            {remoteErrors.map(({ alias }) => (
+              <Text key={alias} dimColor>
+                {'  '}! {alias}: unreachable
+              </Text>
             ))}
           </Box>
         )}

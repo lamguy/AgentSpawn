@@ -12,6 +12,8 @@ export interface SessionListPaneProps {
   attachedSessionName: string | null;
   /** Maximum number of visible sessions before scrolling */
   maxVisible?: number;
+  /** Remote sessions to display below local sessions */
+  remoteSessions?: SessionInfo[];
 }
 
 /** Status symbol and color per session state */
@@ -34,9 +36,12 @@ export function SessionListPane({
   selectedSessionName,
   attachedSessionName,
   maxVisible = 20,
+  remoteSessions = [],
 }: SessionListPaneProps): React.ReactElement {
+  const allSessions = [...sessions, ...remoteSessions];
+
   // Handle empty state
-  if (sessions.length === 0) {
+  if (allSessions.length === 0) {
     return (
       <Box flexDirection="column" paddingX={1}>
         <Box flexDirection="row" justifyContent="space-between">
@@ -50,18 +55,18 @@ export function SessionListPane({
   }
 
   // Calculate scroll offset if there are more sessions than can be displayed
-  const selectedIndex = sessions.findIndex((s) => s.name === selectedSessionName);
+  const selectedIndex = allSessions.findIndex((s) => s.name === selectedSessionName);
   const scrollOffset = Math.max(0, selectedIndex - maxVisible + 1);
-  const visibleSessions = sessions.slice(scrollOffset, scrollOffset + maxVisible);
+  const visibleSessions = allSessions.slice(scrollOffset, scrollOffset + maxVisible);
   const hasMoreAbove = scrollOffset > 0;
-  const hasMoreBelow = scrollOffset + maxVisible < sessions.length;
+  const hasMoreBelow = scrollOffset + maxVisible < allSessions.length;
 
   return (
     <Box flexDirection="column" paddingX={1}>
       {/* Pane title with session count */}
       <Box flexDirection="row" justifyContent="space-between">
         <Text bold>Sessions</Text>
-        <Text dimColor>{sessions.length}</Text>
+        <Text dimColor>{allSessions.length}</Text>
       </Box>
 
       <Box flexDirection="column" marginTop={1}>
@@ -73,19 +78,25 @@ export function SessionListPane({
         {visibleSessions.map((session) => {
           const isSelected = session.name === selectedSessionName;
           const isAttached = session.name === attachedSessionName;
+          const isRemote = Boolean(session.remoteAlias);
           const status = STATUS_CONFIG[session.state] ?? STATUS_CONFIG[SessionState.Stopped];
 
           return (
-            <Box key={session.name} flexDirection="column">
+            <Box key={(session.remoteAlias ? session.remoteAlias + ':' : '') + session.name} flexDirection="column">
               {/* Session row: cursor + name + status symbol */}
               <Box flexDirection="row">
                 {/* Cursor */}
                 <Text bold color="cyan">{isSelected ? '> ' : '  '}</Text>
 
+                {/* Remote alias prefix */}
+                {isRemote && (
+                  <Text color="gray">[{session.remoteAlias}] </Text>
+                )}
+
                 {/* Session name */}
                 <Text
                   bold={isSelected}
-                  color={isAttached ? 'magenta' : isSelected ? 'cyan' : undefined}
+                  color={isAttached ? 'magenta' : isSelected ? 'cyan' : isRemote ? 'gray' : undefined}
                 >
                   {session.name}
                 </Text>
@@ -131,7 +142,7 @@ export function SessionListPane({
         {/* Scroll-down indicator */}
         {hasMoreBelow && (
           <Text dimColor>
-            {'  '}... {sessions.length - scrollOffset - maxVisible} more below
+            {'  '}... {allSessions.length - scrollOffset - maxVisible} more below
           </Text>
         )}
       </Box>

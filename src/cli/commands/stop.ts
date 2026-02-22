@@ -6,14 +6,15 @@ import { SessionNotFoundError } from '../../utils/errors.js';
 export function registerStopCommand(
   program: Command,
   manager: SessionManager,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+   
   _router: Router,
 ): void {
   program
     .command('stop [name]')
     .description('Stop an agent session')
     .option('--all', 'Stop all sessions')
-    .action(async (name: string | undefined, options: { all?: boolean }) => {
+    .option('--tag <tag>', 'Stop all sessions with this tag (repeatable)', (val: string, acc: string[]) => [...acc, val], [] as string[])
+    .action(async (name: string | undefined, options: { all?: boolean; tag: string[] }) => {
       try {
         if (options.all) {
           const count = manager.listSessions().length;
@@ -21,8 +22,16 @@ export function registerStopCommand(
           console.log(`Stopped ${count} session(s).`);
           return;
         }
+        if (options.tag.length > 0) {
+          let total = 0;
+          for (const tag of options.tag) {
+            total += await manager.stopByTag(tag);
+          }
+          console.log(`Stopped ${total} session(s).`);
+          return;
+        }
         if (!name) {
-          console.error('Error: Specify a session name or use --all');
+          console.error('Error: Specify a session name, --tag <tag>, or use --all');
           process.exitCode = 1;
           return;
         }

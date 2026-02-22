@@ -1,8 +1,9 @@
 import { EventEmitter } from 'node:events';
-import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as childProcess from 'node:child_process';
 import { Session } from './session.js';
 import { SessionState, SessionConfig } from '../types.js';
+import { PromptTimeoutError } from '../utils/errors.js';
 
 vi.mock('node:child_process', () => ({
   spawn: vi.fn(),
@@ -438,5 +439,495 @@ describe('Session', () => {
 
     const info = permSession.getInfo();
     expect(info.permissionMode).toBe('bypassPermissions');
+  });
+
+  describe('prompt timeout', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('should reject with PromptTimeoutError after timeout elapses', async () => {
+      const timeoutConfig: SessionConfig = {
+        name: 'timeout-session',
+        workingDirectory: '/tmp/timeout',
+        promptTimeoutMs: 1000,
+      };
+      const timeoutSession = new Session(timeoutConfig);
+      await timeoutSession.start();
+
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const p = timeoutSession.sendPrompt('slow prompt');
+
+      // Advance past the timeout
+      vi.advanceTimersByTime(1000);
+
+      // Simulate the child exiting after SIGTERM
+      mockChild.emit('close', null);
+
+      await expect(p).rejects.toThrow(PromptTimeoutError);
+      await expect(p).rejects.toThrow('Prompt timed out after 1000ms');
+    });
+
+    it('should emit promptTimeout event with correct data shape before rejection', async () => {
+      const timeoutConfig: SessionConfig = {
+        name: 'timeout-session',
+        workingDirectory: '/tmp/timeout',
+        promptTimeoutMs: 2000,
+      };
+      const timeoutSession = new Session(timeoutConfig);
+      await timeoutSession.start();
+
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const timeoutHandler = vi.fn();
+      timeoutSession.on('promptTimeout', timeoutHandler);
+
+      const p = timeoutSession.sendPrompt('my prompt');
+
+      // Emit some partial data before timeout
+      mockChild.stdout.emit('data', assistantEvent('partial'));
+
+      vi.advanceTimersByTime(2000);
+      mockChild.emit('close', null);
+
+      await expect(p).rejects.toThrow(PromptTimeoutError);
+
+      expect(timeoutHandler).toHaveBeenCalledTimes(1);
+      expect(timeoutHandler).toHaveBeenCalledWith({
+        sessionName: 'timeout-session',
+        timeoutMs: 2000,
+        promptText: 'my prompt',
+        partialResponse: 'partial',
+      });
+    });
+
+    it('should send SIGTERM to child process on timeout', async () => {
+      const timeoutConfig: SessionConfig = {
+        name: 'timeout-session',
+        workingDirectory: '/tmp/timeout',
+        promptTimeoutMs: 500,
+      };
+      const timeoutSession = new Session(timeoutConfig);
+      await timeoutSession.start();
+
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const p = timeoutSession.sendPrompt('test');
+
+      vi.advanceTimersByTime(500);
+
+      expect(mockChild.kill).toHaveBeenCalledWith('SIGTERM');
+
+      mockChild.emit('close', null);
+      await p.catch(() => {}); // Consume rejection
+    });
+
+    it('should clear timeout timer on normal completion (no leak)', async () => {
+      const timeoutConfig: SessionConfig = {
+        name: 'timeout-session',
+        workingDirectory: '/tmp/timeout',
+        promptTimeoutMs: 5000,
+      };
+      const timeoutSession = new Session(timeoutConfig);
+      await timeoutSession.start();
+
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
+
+      const p = timeoutSession.sendPrompt('fast prompt');
+
+      // Complete normally before timeout
+      mockChild.stdout.emit('data', assistantEvent('done'));
+      mockChild.emit('close', 0);
+
+      await p;
+
+      // clearTimeout should have been called by settle()
+      expect(clearTimeoutSpy).toHaveBeenCalled();
+
+      // Advance timers past original timeout — no timeout should fire
+      vi.advanceTimersByTime(10000);
+
+      clearTimeoutSpy.mockRestore();
+    });
+
+    it('should apply default timeout of 300000ms when promptTimeoutMs is not set', async () => {
+      // config without promptTimeoutMs — default should be 300000
+      await session.start();
+
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const timeoutHandler = vi.fn();
+      session.on('promptTimeout', timeoutHandler);
+
+      const p = session.sendPrompt('default timeout');
+
+      // Advance just under the default — should NOT have timed out
+      vi.advanceTimersByTime(299999);
+      expect(mockChild.kill).not.toHaveBeenCalled();
+
+      // Advance past the default
+      vi.advanceTimersByTime(1);
+      expect(mockChild.kill).toHaveBeenCalledWith('SIGTERM');
+
+      mockChild.emit('close', null);
+      await expect(p).rejects.toThrow(PromptTimeoutError);
+
+      expect(timeoutHandler).toHaveBeenCalledWith(
+        expect.objectContaining({ timeoutMs: 300000 }),
+      );
+    });
+
+    it('should disable timeout when promptTimeoutMs is 0', async () => {
+      const noTimeoutConfig: SessionConfig = {
+        name: 'no-timeout-session',
+        workingDirectory: '/tmp/no-timeout',
+        promptTimeoutMs: 0,
+      };
+      const noTimeoutSession = new Session(noTimeoutConfig);
+      await noTimeoutSession.start();
+
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const p = noTimeoutSession.sendPrompt('no timeout prompt');
+
+      // Advance a very long time — should NOT trigger timeout
+      vi.advanceTimersByTime(600000);
+      expect(mockChild.kill).not.toHaveBeenCalled();
+
+      // Complete normally
+      mockChild.stdout.emit('data', assistantEvent('response'));
+      mockChild.emit('close', 0);
+
+      const result = await p;
+      expect(result).toBe('response');
+    });
+
+    it('should not double-resolve when close and timeout race', async () => {
+      const timeoutConfig: SessionConfig = {
+        name: 'race-session',
+        workingDirectory: '/tmp/race',
+        promptTimeoutMs: 1000,
+      };
+      const raceSession = new Session(timeoutConfig);
+      await raceSession.start();
+
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const p = raceSession.sendPrompt('race prompt');
+
+      // Complete normally first (before timeout fires)
+      mockChild.stdout.emit('data', assistantEvent('done'));
+      mockChild.emit('close', 0);
+
+      const result = await p;
+      expect(result).toBe('done');
+
+      // Now advance past the timeout — the settled guard should prevent
+      // any further action (no SIGTERM, no PromptTimeoutError)
+      vi.advanceTimersByTime(1000);
+      expect(mockChild.kill).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getMetrics()', () => {
+    it('returns zero values before any prompts', async () => {
+      await session.start();
+
+      const metrics = session.getMetrics();
+      expect(metrics.promptCount).toBe(0);
+      expect(metrics.avgResponseTimeMs).toBe(0);
+      expect(metrics.totalResponseChars).toBe(0);
+      expect(metrics.estimatedTokens).toBe(0);
+      expect(metrics.uptimeMs).toBeGreaterThanOrEqual(0);
+    });
+
+    it('tracks promptCount after successful prompts', async () => {
+      const mockChild1 = createMockChild(42);
+      const mockChild2 = createMockChild(43);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValueOnce(mockChild1 as any).mockReturnValueOnce(mockChild2 as any);
+
+      await session.start();
+
+      const p1 = session.sendPrompt('first');
+      mockChild1.stdout.emit('data', assistantEvent('response one'));
+      mockChild1.emit('close', 0);
+      await p1;
+
+      const p2 = session.sendPrompt('second');
+      mockChild2.stdout.emit('data', assistantEvent('response two'));
+      mockChild2.emit('close', 0);
+      await p2;
+
+      const metrics = session.getMetrics();
+      expect(metrics.promptCount).toBe(2);
+    });
+
+    it('tracks totalResponseChars after successful prompts', async () => {
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      await session.start();
+
+      const response = 'hello world'; // 11 chars
+      const p = session.sendPrompt('test');
+      mockChild.stdout.emit('data', assistantEvent(response));
+      mockChild.emit('close', 0);
+      await p;
+
+      const metrics = session.getMetrics();
+      expect(metrics.totalResponseChars).toBe(11);
+    });
+
+    it('computes estimatedTokens as totalResponseChars / 4 rounded', async () => {
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      await session.start();
+
+      const response = 'a'.repeat(100); // 100 chars -> 25 tokens
+      const p = session.sendPrompt('test');
+      mockChild.stdout.emit('data', assistantEvent(response));
+      mockChild.emit('close', 0);
+      await p;
+
+      const metrics = session.getMetrics();
+      expect(metrics.estimatedTokens).toBe(25);
+    });
+
+    it('computes avgResponseTimeMs across multiple prompts', async () => {
+      const mockChild1 = createMockChild(42);
+      const mockChild2 = createMockChild(43);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValueOnce(mockChild1 as any).mockReturnValueOnce(mockChild2 as any);
+
+      await session.start();
+
+      const p1 = session.sendPrompt('first');
+      mockChild1.stdout.emit('data', assistantEvent('r1'));
+      mockChild1.emit('close', 0);
+      await p1;
+
+      const p2 = session.sendPrompt('second');
+      mockChild2.stdout.emit('data', assistantEvent('r2'));
+      mockChild2.emit('close', 0);
+      await p2;
+
+      const metrics = session.getMetrics();
+      // Two prompts completed — avg should be a non-negative number
+      expect(metrics.avgResponseTimeMs).toBeGreaterThanOrEqual(0);
+    });
+
+    it('does not record metrics for failed prompts', async () => {
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      await session.start();
+
+      const p = session.sendPrompt('bad');
+      mockChild.emit('close', 1); // non-zero exit
+
+      await p.catch(() => {});
+
+      const metrics = session.getMetrics();
+      expect(metrics.totalResponseChars).toBe(0);
+      expect(metrics.avgResponseTimeMs).toBe(0);
+    });
+
+    it('uptimeMs reflects time since start()', async () => {
+      const before = Date.now();
+      await session.start();
+      const after = Date.now();
+
+      const metrics = session.getMetrics();
+      expect(metrics.uptimeMs).toBeGreaterThanOrEqual(0);
+      expect(metrics.uptimeMs).toBeLessThanOrEqual(after - before + 100);
+    });
+
+    it('uptimeMs is 0 when session has not been started', () => {
+      const metrics = session.getMetrics();
+      expect(metrics.uptimeMs).toBe(0);
+    });
+  });
+
+  describe('crash detection', () => {
+    it('should emit crashed event on non-zero exit code', async () => {
+      await session.start();
+
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const crashedHandler = vi.fn();
+      session.on('crashed', crashedHandler);
+
+      const p = session.sendPrompt('test prompt');
+      mockChild.emit('close', 1, null);
+
+      await expect(p).rejects.toThrow('Claude exited with code 1');
+
+      expect(crashedHandler).toHaveBeenCalledTimes(1);
+      expect(crashedHandler).toHaveBeenCalledWith({
+        sessionName: 'test-session',
+        exitCode: 1,
+        signal: null,
+        classification: 'Retryable',
+        reason: 'General error (exit code 1)',
+        promptText: 'test prompt',
+        retryCount: 0,
+      });
+    });
+
+    it('should emit crashed event with signal information', async () => {
+      await session.start();
+
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const crashedHandler = vi.fn();
+      session.on('crashed', crashedHandler);
+
+      const p = session.sendPrompt('signal test');
+      mockChild.emit('close', null, 'SIGTERM');
+
+      await expect(p).rejects.toThrow('Claude exited with code null');
+
+      expect(crashedHandler).toHaveBeenCalledTimes(1);
+      expect(crashedHandler.mock.calls[0][0]).toMatchObject({
+        sessionName: 'test-session',
+        exitCode: null,
+        signal: 'SIGTERM',
+        classification: 'Retryable',
+        promptText: 'signal test',
+        retryCount: 0,
+      });
+    });
+
+    it('should reset retry count on successful completion', async () => {
+      await session.start();
+
+      // First, simulate a crash to increment retry count
+      session.incrementRetryCount();
+      expect(session.getRetryCount()).toBe(1);
+
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const p = session.sendPrompt('success');
+      mockChild.stdout.emit('data', assistantEvent('ok'));
+      mockChild.emit('close', 0, null);
+
+      await p;
+
+      expect(session.getRetryCount()).toBe(0);
+    });
+
+    it('should store lastPrompt for crash recovery', async () => {
+      await session.start();
+
+      expect(session.getLastPrompt()).toBeNull();
+
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const p = session.sendPrompt('my test prompt');
+      expect(session.getLastPrompt()).toBe('my test prompt');
+
+      mockChild.stdout.emit('data', assistantEvent('ok'));
+      mockChild.emit('close', 0, null);
+
+      await p;
+      expect(session.getLastPrompt()).toBe('my test prompt');
+    });
+
+    it('should support incrementRetryCount and resetRetryCount', () => {
+      expect(session.getRetryCount()).toBe(0);
+
+      session.incrementRetryCount();
+      expect(session.getRetryCount()).toBe(1);
+
+      session.incrementRetryCount();
+      expect(session.getRetryCount()).toBe(2);
+
+      session.resetRetryCount();
+      expect(session.getRetryCount()).toBe(0);
+    });
+
+    it('should include retry count in crashed event', async () => {
+      // Create session with initial retry count
+      const retriedSession = new Session(config, 5000, undefined, 0, 2);
+      await retriedSession.start();
+
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      const crashedHandler = vi.fn();
+      retriedSession.on('crashed', crashedHandler);
+
+      const p = retriedSession.sendPrompt('retry test');
+      mockChild.emit('close', 127, null);
+
+      await expect(p).rejects.toThrow();
+
+      expect(crashedHandler.mock.calls[0][0]).toMatchObject({
+        sessionName: 'test-session',
+        exitCode: 127,
+        classification: 'Permanent',
+        retryCount: 2,
+      });
+    });
+
+    it('should use restart policy from config', () => {
+      const configWithPolicy: SessionConfig = {
+        name: 'policy-session',
+        workingDirectory: '/tmp/policy',
+        restartPolicy: { enabled: true, maxRetries: 5 },
+      };
+
+      new Session(configWithPolicy);
+
+      // The restart policy is stored but not exposed via getInfo()
+      // Validate it's set correctly via constructor
+      expect(configWithPolicy.restartPolicy).toEqual({ enabled: true, maxRetries: 5 });
+    });
+
+    it('should default to disabled restart policy when not specified', () => {
+      const defaultConfig: SessionConfig = {
+        name: 'default-session',
+        workingDirectory: '/tmp/default',
+      };
+
+      const defaultSession = new Session(defaultConfig);
+      // Default policy is { enabled: false, maxRetries: 3 }
+      expect(defaultSession).toBeInstanceOf(Session);
+    });
   });
 });

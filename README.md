@@ -22,10 +22,10 @@ Manage multiple Claude Code instances from a single terminal. Start, stop, switc
   <img src="docs/screenshots/cli-help.gif" alt="agentspawn --help" width="700">
 </p>
 
-### Test Suite (268 tests)
+### Test Suite (516 tests)
 
 <p align="center">
-  <img src="docs/screenshots/tests.gif" alt="Test suite — 268 tests passing" width="700">
+  <img src="docs/screenshots/tests.gif" alt="Test suite — 516 tests passing" width="700">
 </p>
 
 ## Install
@@ -61,6 +61,7 @@ Then use keyboard shortcuts to manage sessions:
 | `Tab` / `j`/`k` | Navigate between sessions |
 | `x` | Stop selected session |
 | `:` | Open action menu |
+| `Ctrl+R` | Search prompt history (attached mode) |
 | `?` | Show help |
 | `q` | Quit |
 
@@ -74,9 +75,78 @@ agentspawn start project-b --dir ~/work   # Start with a working directory
 agentspawn list                           # See all sessions
 agentspawn list --json                    # Machine-readable JSON output
 agentspawn exec project-a "fix the bug"   # Send a prompt to a session
+agentspawn exec --all "update deps"       # Broadcast to all running sessions
+agentspawn exec --group my-ws "run tests" # Broadcast to a workspace
 agentspawn stop project-a                 # Stop a session
 agentspawn stop --all                     # Stop everything
 ```
+
+### Workspaces
+
+Group related sessions into named workspaces for easier management:
+
+```bash
+agentspawn workspace create my-project           # Create a workspace
+agentspawn workspace add my-project api web db   # Add sessions to it
+agentspawn workspace list                        # See all workspaces
+agentspawn workspace list --json                 # Machine-readable JSON
+agentspawn workspace switch my-project           # Check status of all sessions
+agentspawn workspace remove my-project db        # Remove a session from workspace
+agentspawn workspace delete my-project           # Delete the workspace
+```
+
+### Session Templates
+
+Save commonly used session configurations as templates and reuse them:
+
+```bash
+agentspawn template create backend \
+  --dir ~/projects/api \
+  --permission-mode acceptEdits \
+  --system-prompt "You are a backend engineer" \
+  -e NODE_ENV=development -e DEBUG=true         # Create a template
+agentspawn template list                        # List all templates
+agentspawn template show backend                # Show template details
+agentspawn template delete backend              # Delete a template
+
+agentspawn start my-session --template backend  # Start a session from a template
+```
+
+Template values serve as defaults -- CLI flags (`--dir`, `--permission-mode`) override them when specified. Templates are also available in the TUI session creation dialog.
+
+### Prompt History
+
+```bash
+agentspawn history my-session                   # Show prompt history for a session
+agentspawn history my-session --limit 10        # Limit to last 10 entries
+agentspawn history --search "fix bug"           # Search across all sessions
+agentspawn history my-session --search "auth"   # Search within a session
+agentspawn replay my-session 5                  # Replay prompt #5 from history
+```
+
+### Export History
+
+Export session history to a file for documentation, audit trails, or integration with other tools:
+
+```bash
+agentspawn export my-session                              # Export as Markdown (default)
+agentspawn export my-session --format json                # Export as JSON
+agentspawn export my-session --format text                # Export as plain text
+agentspawn export my-session --output ./docs/session.md   # Custom output path
+```
+
+**Export Formats:**
+
+- **Markdown** (default) - Human-readable format with headers, code blocks, and metadata. Best for documentation and sharing.
+- **JSON** - Machine-readable structured format. Best for programmatic processing, integration with other tools, or archiving.
+- **Plain text** - Simple grep-friendly format with consistent separators. Best for quick searching and command-line processing.
+
+**Use Cases:**
+- **Audit trails** - Keep records of prompts and responses for compliance or review
+- **Documentation** - Export successful sessions as reference material or tutorials
+- **Knowledge sharing** - Share session transcripts with team members or stakeholders
+- **Integration** - Pipe JSON exports to analysis tools, databases, or reporting systems
+- **Debugging** - Export problematic sessions for offline analysis
 
 ## Commands
 
@@ -86,8 +156,13 @@ agentspawn stop --all                     # Stop everything
 | `agentspawn start <name>` | Start a new Claude Code session |
 | `agentspawn stop [name]` | Stop a session (or `--all` to stop everything) |
 | `agentspawn list` | Show all sessions with status |
-| `agentspawn exec <name> <cmd>` | Send a prompt to a session |
+| `agentspawn exec <name> <cmd>` | Send a prompt to a session (`--all` for all running, `--group <ws>` for a workspace) |
 | `agentspawn switch <name>` | Attach to a session (interactive prompt mode) |
+| `agentspawn workspace <cmd>` | Manage session workspaces (create, add, remove, list, switch, delete) |
+| `agentspawn template <cmd>` | Manage session templates (create, list, show, delete) |
+| `agentspawn history [session]` | Show prompt history, search across sessions |
+| `agentspawn replay <session> <index>` | Replay a prompt from history |
+| `agentspawn export <session>` | Export session history to a file (markdown, json, or text format) |
 
 Every command supports `--help` for detailed usage.
 
@@ -97,12 +172,123 @@ Every command supports `--help` for detailed usage.
 - **Overlay system** — help, action menu, session creation, and confirmation dialogs
 - **Prompt-based sessions** — uses `claude --print` per prompt, keeping the TUI in control at all times
 - **Conversation persistence** — session IDs and prompt counts survive TUI restarts
-- **Cross-process discovery** — TUI polls the registry to discover sessions started by other processes
-- **Persistent registry** — session state persists via `~/.agentspawn/sessions.json`
+- **Workspaces** — group related sessions into named workspaces for batch management
+- **Session templates** — save and reuse session configurations (directory, permissions, env, system prompt)
+- **Prompt history** — persistent per-session prompt history with search and replay
+- **History search overlay** — Ctrl+R in attached mode for interactive history search
+- **History export** — export session history to markdown, JSON, or plain text formats
+- **Cross-process discovery** — event-based registry watching to discover sessions started by other processes
+- **Persistent registry** — session state persists via `~/.agentspawn/sessions.json` with file locking
+- **Prompt timeout** — configurable timeout for hung Claude processes (default 5 min)
 - **Stale PID detection** — validates registry PIDs on startup, marks dead sessions as crashed
 - **Graceful shutdown** — SIGTERM first, SIGKILL after configurable timeout (default 5s)
-- **Real-time output** — streaming response display with timestamps and error highlighting
+- **Real-time output** — streaming response display with timestamps, error highlighting, and memory-bounded buffers
 - **Scriptable** — `--json` flag, proper exit codes (0 success, 1 user error, 2 system error)
+
+## Export Format Specifications
+
+Each export format includes metadata (session name, export timestamp, entry count, date range) and all prompt-response pairs from the session history.
+
+### Markdown Format
+
+Structure:
+- Level 1 heading with session name
+- Metadata section with export timestamp, entry count, and date range
+- Level 2 headings per prompt (indexed)
+- Code blocks for prompt and response content
+
+Example output:
+```markdown
+# my-session
+
+**Exported:** 2026-02-15T10:30:00.000Z
+**Entries:** 3
+**Date Range:** 2026-02-15T09:00:00.000Z to 2026-02-15T10:00:00.000Z
+
+---
+
+## Prompt #1
+
+**Timestamp:** 2026-02-15T09:00:00.000Z
+
+**Prompt:**
+
+```
+Create a new feature
+```
+
+**Response:**
+
+```
+I'll help you create a new feature...
+```
+```
+
+Best for: Documentation, sharing with stakeholders, archiving conversations for reference.
+
+### JSON Format
+
+Structure:
+- Root object with `metadata` and `entries` keys
+- 2-space indentation
+- ISO 8601 timestamps
+- Full content preservation
+
+Example output:
+```json
+{
+  "metadata": {
+    "sessionName": "my-session",
+    "exportedAt": "2026-02-15T10:30:00.000Z",
+    "entryCount": 3,
+    "dateRange": {
+      "oldest": "2026-02-15T09:00:00.000Z",
+      "newest": "2026-02-15T10:00:00.000Z"
+    }
+  },
+  "entries": [
+    {
+      "session": "my-session",
+      "index": 1,
+      "timestamp": "2026-02-15T09:00:00.000Z",
+      "prompt": "Create a new feature",
+      "responsePreview": "I'll help you create a new feature..."
+    }
+  ]
+}
+```
+
+Best for: Programmatic processing, integration with databases, analysis tools, CI/CD pipelines.
+
+### Plain Text Format
+
+Structure:
+- Session header with uppercase labels
+- 80-character separators (`=` for header, `-` between entries)
+- Entry blocks with `[#index] timestamp`, `PROMPT:`, `RESPONSE:` labels
+- Grep-friendly format
+
+Example output:
+```text
+================================================================================
+SESSION: my-session
+EXPORTED: 2026-02-15T10:30:00.000Z
+ENTRIES: 3
+DATE RANGE: 2026-02-15T09:00:00.000Z to 2026-02-15T10:00:00.000Z
+================================================================================
+
+[#1] 2026-02-15T09:00:00.000Z
+
+PROMPT:
+Create a new feature
+
+RESPONSE:
+I'll help you create a new feature...
+
+--------------------------------------------------------------------------------
+```
+
+Best for: Command-line searching with `grep`, quick scanning, log file analysis, minimal formatting needs.
 
 ## Development
 
@@ -130,7 +316,7 @@ node dist/index.js tui # Launch the TUI
 ### Test
 
 ```bash
-npm test               # Run all 268 tests (mocked — no real Claude needed)
+npm test               # Run all 516 tests (mocked — no real Claude needed)
 ```
 
 ### Lint & Format
@@ -147,12 +333,16 @@ npm run typecheck      # TypeScript strict mode type checking
 ```
 src/
   cli/              Command definitions and argument parsing
-    commands/       start, stop, list, exec, switch, tui
+    commands/       start, stop, list, exec, switch, tui, workspace, template, history
     index.ts        CLI entry point
   core/             Session lifecycle management
     session.ts      Prompt-based sessions using claude --print
     manager.ts      Session orchestration, registry polling, adoption
-    registry.ts     JSON file persistence with corruption detection
+    registry.ts     JSON file persistence with file locking
+    registry-watcher.ts  Event-based registry file watching
+    workspace.ts    Workspace management (session grouping)
+    template.ts     Template storage and retrieval (JSON with file locking)
+    history.ts      Per-session prompt history (NDJSON storage)
   io/               I/O multiplexing
     router.ts       Attaches/detaches terminal I/O to sessions
     formatter.ts    ANSI colored output, session table formatting

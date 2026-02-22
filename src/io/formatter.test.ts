@@ -1,11 +1,23 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   formatSessionOutput,
   formatStatusLine,
   colorForState,
   formatSessionTable,
+  formatWorkspaceTable,
+  formatSessionsSummary,
+  formatRelativeDate,
+  formatTemplateTable,
+  formatBroadcastResults,
 } from './formatter.js';
-import { SessionState } from '../types.js';
+import { BroadcastResult, SessionState, WorkspaceEntry, TemplateEntry } from '../types.js';
+
+/**
+ * Strip ANSI color codes from a string for testing purposes
+ */
+function stripAnsi(str: string): string {
+  return str.replace(/\x1b\[[0-9;]*m/g, '');
+}
 
 describe('Formatter', () => {
   it('formatSessionOutput prefixes with session name', () => {
@@ -20,6 +32,7 @@ describe('Formatter', () => {
       state: SessionState.Running,
       startedAt: new Date(),
       workingDirectory: '/tmp/work',
+      promptCount: 0,
     });
     expect(result).toContain('agent-1');
     expect(result).toContain('running');
@@ -51,6 +64,7 @@ describe('Formatter', () => {
         state: SessionState.Running,
         startedAt: new Date('2025-01-01T00:00:00Z'),
         workingDirectory: '/tmp/a',
+        promptCount: 0,
       },
       {
         name: 'agent-2',
@@ -58,6 +72,7 @@ describe('Formatter', () => {
         state: SessionState.Crashed,
         startedAt: null,
         workingDirectory: '/tmp/b',
+        promptCount: 0,
       },
     ];
     const result = formatSessionTable(sessions);
@@ -66,5 +81,283 @@ describe('Formatter', () => {
     expect(result).toContain('running');
     expect(result).toContain('crashed');
     expect(result).toContain('--');
+  });
+});
+
+describe('formatWorkspaceTable', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('should return "No workspaces." for empty array', () => {
+    expect(formatWorkspaceTable([])).toBe('No workspaces.');
+  });
+
+  it('should render correct columns (NAME, SESSIONS, CREATED)', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-06-15T12:00:00Z'));
+
+    const workspaces: WorkspaceEntry[] = [
+      {
+        name: 'project-a',
+        sessionNames: ['s1', 's2'],
+        createdAt: '2025-06-15T11:55:00Z',
+      },
+    ];
+
+    const result = formatWorkspaceTable(workspaces);
+    expect(result).toContain('NAME');
+    expect(result).toContain('SESSIONS');
+    expect(result).toContain('CREATED');
+    expect(result).toContain('project-a');
+    expect(result).toContain('2 (s1, s2)');
+    expect(result).toContain('5m ago');
+  });
+
+  it('should render multiple workspaces as rows', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-06-15T12:00:00Z'));
+
+    const workspaces: WorkspaceEntry[] = [
+      {
+        name: 'alpha',
+        sessionNames: [],
+        createdAt: '2025-06-15T12:00:00Z',
+      },
+      {
+        name: 'beta',
+        sessionNames: ['x'],
+        createdAt: '2025-06-15T10:00:00Z',
+      },
+    ];
+
+    const result = formatWorkspaceTable(workspaces);
+    expect(result).toContain('alpha');
+    expect(result).toContain('beta');
+    expect(result).toContain('0');
+    expect(result).toContain('1 (x)');
+  });
+});
+
+describe('formatSessionsSummary', () => {
+  it('should return "0" for empty array', () => {
+    expect(formatSessionsSummary([])).toBe('0');
+  });
+
+  it('should show count and all names for 1-3 sessions', () => {
+    expect(formatSessionsSummary(['a'])).toBe('1 (a)');
+    expect(formatSessionsSummary(['a', 'b'])).toBe('2 (a, b)');
+    expect(formatSessionsSummary(['a', 'b', 'c'])).toBe('3 (a, b, c)');
+  });
+
+  it('should truncate with "..." for 4+ sessions', () => {
+    const result = formatSessionsSummary(['a', 'b', 'c', 'd']);
+    expect(result).toBe('4 (a, b, c, ...)');
+  });
+
+  it('should truncate with "..." for many sessions', () => {
+    const result = formatSessionsSummary(['s1', 's2', 's3', 's4', 's5', 's6']);
+    expect(result).toBe('6 (s1, s2, s3, ...)');
+  });
+});
+
+describe('formatTemplateTable', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('should return "No templates." for empty array', () => {
+    expect(formatTemplateTable([])).toBe('No templates.');
+  });
+
+  it('should render correct columns (NAME, DIRECTORY, PERMISSION MODE, CREATED)', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-06-15T12:00:00Z'));
+
+    const templates: TemplateEntry[] = [
+      {
+        name: 'backend',
+        workingDirectory: '/projects/backend',
+        permissionMode: 'bypassPermissions',
+        createdAt: '2025-06-15T11:55:00Z',
+      },
+    ];
+
+    const result = formatTemplateTable(templates);
+    expect(result).toContain('NAME');
+    expect(result).toContain('DIRECTORY');
+    expect(result).toContain('PERMISSION MODE');
+    expect(result).toContain('CREATED');
+    expect(result).toContain('backend');
+    expect(result).toContain('/projects/backend');
+    expect(result).toContain('bypassPermissions');
+    expect(result).toContain('5m ago');
+  });
+
+  it('should display "--" for undefined workingDirectory and permissionMode', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-06-15T12:00:00Z'));
+
+    const templates: TemplateEntry[] = [
+      {
+        name: 'minimal',
+        createdAt: '2025-06-15T12:00:00Z',
+      },
+    ];
+
+    const result = formatTemplateTable(templates);
+    expect(result).toContain('minimal');
+    // The "--" placeholders should appear for missing directory and permission mode
+    const lines = result.split('\n');
+    // The data row (second line) should contain "--" twice
+    const dataLine = lines[1];
+    const dashMatches = dataLine.match(/--/g);
+    expect(dashMatches).not.toBeNull();
+    expect(dashMatches!.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('should render multiple templates as rows', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-06-15T12:00:00Z'));
+
+    const templates: TemplateEntry[] = [
+      {
+        name: 'alpha',
+        workingDirectory: '/alpha',
+        createdAt: '2025-06-15T12:00:00Z',
+      },
+      {
+        name: 'beta',
+        permissionMode: 'default',
+        createdAt: '2025-06-15T10:00:00Z',
+      },
+    ];
+
+    const result = formatTemplateTable(templates);
+    expect(result).toContain('alpha');
+    expect(result).toContain('beta');
+    expect(result).toContain('/alpha');
+    expect(result).toContain('default');
+    // Should have header + 2 data rows = 3 lines
+    const lines = result.split('\n');
+    expect(lines).toHaveLength(3);
+  });
+});
+
+describe('formatRelativeDate', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('should return "just now" for dates less than 60 seconds ago', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-06-15T12:00:30Z'));
+
+    expect(formatRelativeDate('2025-06-15T12:00:00Z')).toBe('just now');
+  });
+
+  it('should return "Xm ago" for dates minutes ago', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-06-15T12:05:00Z'));
+
+    expect(formatRelativeDate('2025-06-15T12:00:00Z')).toBe('5m ago');
+  });
+
+  it('should return "Xh ago" for dates hours ago', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-06-15T15:00:00Z'));
+
+    expect(formatRelativeDate('2025-06-15T12:00:00Z')).toBe('3h ago');
+  });
+
+  it('should return "Xd ago" for dates days ago', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-06-20T12:00:00Z'));
+
+    expect(formatRelativeDate('2025-06-15T12:00:00Z')).toBe('5d ago');
+  });
+
+  it('should return locale date string for dates 30+ days ago', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-08-15T12:00:00Z'));
+
+    const result = formatRelativeDate('2025-06-15T12:00:00Z');
+    // Should be a locale date string, not "Xd ago"
+    expect(result).not.toContain('d ago');
+    expect(result).not.toContain('just now');
+  });
+});
+
+describe('formatBroadcastResults', () => {
+  it('should format mixed success and failure results', () => {
+    const results: BroadcastResult[] = [
+      { sessionName: 'alpha', status: 'fulfilled', response: 'Done' },
+      { sessionName: 'beta', status: 'rejected', error: 'Session not found' },
+    ];
+
+    const output = formatBroadcastResults(results);
+    const stripped = stripAnsi(output);
+
+    expect(stripped).toContain('[alpha] OK: Done');
+    expect(stripped).toContain('[beta] FAILED: Session not found');
+    expect(stripped).toContain('Broadcast complete: 1 succeeded, 1 failed');
+  });
+
+  it('should format all-success results', () => {
+    const results: BroadcastResult[] = [
+      { sessionName: 'a', status: 'fulfilled', response: 'OK from a' },
+      { sessionName: 'b', status: 'fulfilled', response: 'OK from b' },
+      { sessionName: 'c', status: 'fulfilled', response: 'OK from c' },
+    ];
+
+    const output = formatBroadcastResults(results);
+    const stripped = stripAnsi(output);
+
+    expect(stripped).toContain('[a] OK: OK from a');
+    expect(stripped).toContain('[b] OK: OK from b');
+    expect(stripped).toContain('[c] OK: OK from c');
+    expect(stripped).toContain('Broadcast complete: 3 succeeded, 0 failed');
+  });
+
+  it('should format empty results array', () => {
+    const output = formatBroadcastResults([]);
+
+    expect(output).toContain('Broadcast complete: 0 succeeded, 0 failed');
+  });
+
+  it('should truncate long responses to 200 characters', () => {
+    const longResponse = 'x'.repeat(300);
+    const results: BroadcastResult[] = [
+      { sessionName: 'verbose', status: 'fulfilled', response: longResponse },
+    ];
+
+    const output = formatBroadcastResults(results);
+
+    // The preview should be truncated to 200 chars + "..."
+    expect(output).toContain('x'.repeat(200) + '...');
+    expect(output).not.toContain('x'.repeat(201));
+  });
+
+  it('should show "Unknown error" when rejected result has no error message', () => {
+    const results: BroadcastResult[] = [
+      { sessionName: 'mystery', status: 'rejected' },
+    ];
+
+    const output = formatBroadcastResults(results);
+
+    expect(output).toContain('[mystery] FAILED: Unknown error');
+    expect(output).toContain('Broadcast complete: 0 succeeded, 1 failed');
+  });
+
+  it('should handle fulfilled result with empty response', () => {
+    const results: BroadcastResult[] = [
+      { sessionName: 'empty', status: 'fulfilled', response: '' },
+    ];
+
+    const output = formatBroadcastResults(results);
+    const stripped = stripAnsi(output);
+
+    expect(stripped).toContain('[empty] OK: ');
+    expect(stripped).toContain('Broadcast complete: 1 succeeded, 0 failed');
   });
 });

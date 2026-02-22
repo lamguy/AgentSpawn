@@ -1,5 +1,7 @@
 import { Command } from 'commander';
 import { SessionManager } from '../../core/manager.js';
+import type { HistoryStore } from '../../core/history.js';
+import type { TemplateManager } from '../../core/template.js';
 import { Router } from '../../io/router.js';
 import { launchTUI } from '../../tui/index.js';
 
@@ -7,6 +9,8 @@ export function registerTUICommand(
   program: Command,
   manager: SessionManager,
   router: Router,
+  historyStore?: HistoryStore,
+  templateManager?: TemplateManager,
 ): void {
   program
     .command('tui')
@@ -14,9 +18,10 @@ export function registerTUICommand(
     .option('-s, --session <name>', 'Initially select a specific session')
     .action(async (options: { session?: string }) => {
       try {
-        // Launch the TUI with optional initial session
         const tui = launchTUI(manager, router, {
           initialSession: options.session,
+          historyStore,
+          templateManager,
         });
 
         // Handle process signals for graceful shutdown
