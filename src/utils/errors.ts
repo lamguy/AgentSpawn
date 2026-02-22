@@ -132,3 +132,58 @@ export class PromptTimeoutError extends AgentSpawnError {
     this.name = 'PromptTimeoutError';
   }
 }
+
+export class RemoteCorruptError extends AgentSpawnError {
+  constructor(path: string) {
+    super(`Remotes file is corrupt: ${path}`, 'REMOTE_CORRUPT');
+    this.name = 'RemoteCorruptError';
+  }
+}
+
+export class RemoteLockError extends AgentSpawnError {
+  constructor(path: string, cause?: Error) {
+    super(`Failed to acquire lock on remotes file: ${path}`, 'REMOTE_LOCK_FAILED');
+    this.name = 'RemoteLockError';
+    if (cause) {
+      this.cause = cause;
+    }
+  }
+}
+
+export class RemoteNotFoundError extends AgentSpawnError {
+  constructor(alias: string) {
+    super(`Remote not found: ${alias}`, 'REMOTE_NOT_FOUND');
+    this.name = 'RemoteNotFoundError';
+  }
+}
+
+export class RemoteAlreadyExistsError extends AgentSpawnError {
+  constructor(alias: string) {
+    super(`Remote already exists: ${alias}`, 'REMOTE_ALREADY_EXISTS');
+    this.name = 'RemoteAlreadyExistsError';
+  }
+}
+
+export class TunnelError extends AgentSpawnError {
+  constructor(alias: string, reason: string) {
+    super(`Tunnel error for remote "${alias}": ${reason}`, 'TUNNEL_ERROR');
+    this.name = 'TunnelError';
+  }
+}
+
+export class SandboxNotAvailableError extends AgentSpawnError {
+  constructor() {
+    super(
+      'No sandbox backend available. Install Docker (all platforms) or bubblewrap/bwrap (Linux).',
+      'SANDBOX_NOT_AVAILABLE',
+    );
+    this.name = 'SandboxNotAvailableError';
+  }
+}
+
+export class SandboxStartError extends AgentSpawnError {
+  constructor(sessionName: string, reason: string) {
+    super(`Failed to start sandbox for session "${sessionName}": ${reason}`, 'SANDBOX_START_FAILED');
+    this.name = 'SandboxStartError';
+  }
+}

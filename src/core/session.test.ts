@@ -650,6 +650,130 @@ describe('Session', () => {
     });
   });
 
+  describe('getMetrics()', () => {
+    it('returns zero values before any prompts', async () => {
+      await session.start();
+
+      const metrics = session.getMetrics();
+      expect(metrics.promptCount).toBe(0);
+      expect(metrics.avgResponseTimeMs).toBe(0);
+      expect(metrics.totalResponseChars).toBe(0);
+      expect(metrics.estimatedTokens).toBe(0);
+      expect(metrics.uptimeMs).toBeGreaterThanOrEqual(0);
+    });
+
+    it('tracks promptCount after successful prompts', async () => {
+      const mockChild1 = createMockChild(42);
+      const mockChild2 = createMockChild(43);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValueOnce(mockChild1 as any).mockReturnValueOnce(mockChild2 as any);
+
+      await session.start();
+
+      const p1 = session.sendPrompt('first');
+      mockChild1.stdout.emit('data', assistantEvent('response one'));
+      mockChild1.emit('close', 0);
+      await p1;
+
+      const p2 = session.sendPrompt('second');
+      mockChild2.stdout.emit('data', assistantEvent('response two'));
+      mockChild2.emit('close', 0);
+      await p2;
+
+      const metrics = session.getMetrics();
+      expect(metrics.promptCount).toBe(2);
+    });
+
+    it('tracks totalResponseChars after successful prompts', async () => {
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      await session.start();
+
+      const response = 'hello world'; // 11 chars
+      const p = session.sendPrompt('test');
+      mockChild.stdout.emit('data', assistantEvent(response));
+      mockChild.emit('close', 0);
+      await p;
+
+      const metrics = session.getMetrics();
+      expect(metrics.totalResponseChars).toBe(11);
+    });
+
+    it('computes estimatedTokens as totalResponseChars / 4 rounded', async () => {
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      await session.start();
+
+      const response = 'a'.repeat(100); // 100 chars -> 25 tokens
+      const p = session.sendPrompt('test');
+      mockChild.stdout.emit('data', assistantEvent(response));
+      mockChild.emit('close', 0);
+      await p;
+
+      const metrics = session.getMetrics();
+      expect(metrics.estimatedTokens).toBe(25);
+    });
+
+    it('computes avgResponseTimeMs across multiple prompts', async () => {
+      const mockChild1 = createMockChild(42);
+      const mockChild2 = createMockChild(43);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValueOnce(mockChild1 as any).mockReturnValueOnce(mockChild2 as any);
+
+      await session.start();
+
+      const p1 = session.sendPrompt('first');
+      mockChild1.stdout.emit('data', assistantEvent('r1'));
+      mockChild1.emit('close', 0);
+      await p1;
+
+      const p2 = session.sendPrompt('second');
+      mockChild2.stdout.emit('data', assistantEvent('r2'));
+      mockChild2.emit('close', 0);
+      await p2;
+
+      const metrics = session.getMetrics();
+      // Two prompts completed — avg should be a non-negative number
+      expect(metrics.avgResponseTimeMs).toBeGreaterThanOrEqual(0);
+    });
+
+    it('does not record metrics for failed prompts', async () => {
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      await session.start();
+
+      const p = session.sendPrompt('bad');
+      mockChild.emit('close', 1); // non-zero exit
+
+      await p.catch(() => {});
+
+      const metrics = session.getMetrics();
+      expect(metrics.totalResponseChars).toBe(0);
+      expect(metrics.avgResponseTimeMs).toBe(0);
+    });
+
+    it('uptimeMs reflects time since start()', async () => {
+      const before = Date.now();
+      await session.start();
+      const after = Date.now();
+
+      const metrics = session.getMetrics();
+      expect(metrics.uptimeMs).toBeGreaterThanOrEqual(0);
+      expect(metrics.uptimeMs).toBeLessThanOrEqual(after - before + 100);
+    });
+
+    it('uptimeMs is 0 when session has not been started', () => {
+      const metrics = session.getMetrics();
+      expect(metrics.uptimeMs).toBe(0);
+    });
+  });
+
   describe('crash detection', () => {
     it('should emit crashed event on non-zero exit code', async () => {
       await session.start();
@@ -788,8 +912,7 @@ describe('Session', () => {
         restartPolicy: { enabled: true, maxRetries: 5 },
       };
 
-      const policySession = new Session(configWithPolicy);
-      const info = policySession.getInfo();
+      new Session(configWithPolicy);
 
       // The restart policy is stored but not exposed via getInfo()
       // Validate it's set correctly via constructor

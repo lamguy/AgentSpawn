@@ -18,6 +18,8 @@ export function validateConfig(input: unknown): AgentSpawnConfig {
       typeof config.historyDir === 'string' ? config.historyDir : DEFAULT_CONFIG.historyDir,
     templatesPath:
       typeof config.templatesPath === 'string' ? config.templatesPath : DEFAULT_CONFIG.templatesPath,
+    remotesPath:
+      typeof config.remotesPath === 'string' ? config.remotesPath : DEFAULT_CONFIG.remotesPath,
     logLevel: typeof config.logLevel === 'string' ? config.logLevel : DEFAULT_CONFIG.logLevel,
     shutdownTimeoutMs:
       typeof config.shutdownTimeoutMs === 'number'

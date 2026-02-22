@@ -10,6 +10,7 @@ describe('validateConfig', () => {
       workspacesPath: '/custom/workspaces.json',
       historyDir: '/custom/history',
       templatesPath: '/custom/templates.json',
+      remotesPath: '/custom/remotes.json',
       logLevel: 'debug',
       shutdownTimeoutMs: 10000,
     };
@@ -25,6 +26,7 @@ describe('validateConfig', () => {
       workspacesPath: DEFAULT_CONFIG.workspacesPath,
       historyDir: DEFAULT_CONFIG.historyDir,
       templatesPath: DEFAULT_CONFIG.templatesPath,
+      remotesPath: DEFAULT_CONFIG.remotesPath,
       logLevel: DEFAULT_CONFIG.logLevel,
       shutdownTimeoutMs: DEFAULT_CONFIG.shutdownTimeoutMs,
     });

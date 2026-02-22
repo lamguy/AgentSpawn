@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { EventEmitter } from 'node:events';
 import { RegistryWatcher } from './registry-watcher.js';
 
 function tmpFile(): string {
@@ -12,12 +13,25 @@ function tmpFile(): string {
   );
 }
 
+/** Shape of the mock FS watcher objects used throughout these tests */
+interface MockFsWatcher extends EventEmitter {
+  close: ReturnType<typeof vi.fn>;
+}
+
+function makeMockWatcher(): MockFsWatcher {
+  const emitter = new EventEmitter() as MockFsWatcher;
+  emitter.close = vi.fn();
+  return emitter;
+}
+
 describe('RegistryWatcher', () => {
   describe('constructor defaults', () => {
     it('should use debounceMs=100 and fallbackIntervalMs=30000 by default', () => {
       const watcher = new RegistryWatcher({ registryPath: '/tmp/noop.json' });
       // Access private fields via casting to verify defaults
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       expect((watcher as any).debounceMs).toBe(100);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       expect((watcher as any).fallbackIntervalMs).toBe(30_000);
     });
 
@@ -27,7 +41,9 @@ describe('RegistryWatcher', () => {
         debounceMs: 50,
         fallbackIntervalMs: 5000,
       });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       expect((watcher as any).debounceMs).toBe(50);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       expect((watcher as any).fallbackIntervalMs).toBe(5000);
     });
   });
@@ -95,16 +111,23 @@ describe('RegistryWatcher', () => {
       watcher.watch(callback);
 
       // Verify internals are set
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       expect((watcher as any).watcher).not.toBeNull();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       expect((watcher as any).fallbackInterval).not.toBeNull();
 
       watcher.unwatch();
 
       // Verify all resources are released
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       expect((watcher as any).watcher).toBeNull();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       expect((watcher as any).fallbackInterval).toBeNull();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       expect((watcher as any).debounceTimer).toBeNull();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       expect((watcher as any).retryTimer).toBeNull();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       expect((watcher as any).callback).toBeNull();
 
       // Writing after unwatch should not trigger callback
@@ -236,15 +259,13 @@ describe('RegistryWatcher', () => {
 
       // Mock fs.watch to be a no-op (simulating unreliable platform)
       const watchSpy = vi.spyOn(fs, 'watch').mockImplementation(() => {
-        const emitter = new (require('events').EventEmitter)();
-        emitter.close = vi.fn();
-        return emitter as any;
+        return makeMockWatcher() as unknown as fs.FSWatcher;
       });
 
       // Mock statSync to control mtime
       let mtimeMs = 1000;
       const statSpy = vi.spyOn(fs, 'statSync').mockImplementation(() => {
-        return { mtimeMs } as any;
+        return { mtimeMs } as unknown as fs.Stats;
       });
 
       const watcher = new RegistryWatcher({
@@ -280,13 +301,11 @@ describe('RegistryWatcher', () => {
       const callback = vi.fn();
 
       const watchSpy = vi.spyOn(fs, 'watch').mockImplementation(() => {
-        const emitter = new (require('events').EventEmitter)();
-        emitter.close = vi.fn();
-        return emitter as any;
+        return makeMockWatcher() as unknown as fs.FSWatcher;
       });
 
       const statSpy = vi.spyOn(fs, 'statSync').mockImplementation(() => {
-        return { mtimeMs: 1000 } as any;
+        return { mtimeMs: 1000 } as unknown as fs.Stats;
       });
 
       const watcher = new RegistryWatcher({
@@ -316,24 +335,23 @@ describe('RegistryWatcher', () => {
       let watchCallback: ((eventType: string, filename: string | null) => void) | null = null;
       let watchCallCount = 0;
 
-      const mockWatchers: Array<{ close: ReturnType<typeof vi.fn> }> = [];
+      const mockWatchers: MockFsWatcher[] = [];
 
-      const watchSpy = vi.spyOn(fs, 'watch').mockImplementation((_path: any, cb: any) => {
-        watchCallCount++;
-        watchCallback = cb as any;
-        const emitter = new (require('events').EventEmitter)();
-        emitter.close = vi.fn();
-        mockWatchers.push(emitter as any);
-        // Wire up the callback to the emitter pattern
-        if (cb) {
-          // Store callback for manual triggering
-          watchCallback = cb;
-        }
-        return emitter as any;
-      });
+      const watchSpy = vi.spyOn(fs, 'watch').mockImplementation(
+        (_path: fs.PathLike, cb?: fs.WatchListener<string>) => {
+          watchCallCount++;
+          const emitter = makeMockWatcher();
+          mockWatchers.push(emitter);
+          // Wire up the callback to the emitter pattern
+          if (cb) {
+            watchCallback = cb as (eventType: string, filename: string | null) => void;
+          }
+          return emitter as unknown as fs.FSWatcher;
+        },
+      );
 
       const statSpy = vi.spyOn(fs, 'statSync').mockImplementation(() => {
-        return { mtimeMs: 1000 } as any;
+        return { mtimeMs: 1000 } as unknown as fs.Stats;
       });
 
       const watcher = new RegistryWatcher({
@@ -371,19 +389,16 @@ describe('RegistryWatcher', () => {
     it('should stop retrying after max retries', async () => {
       vi.useFakeTimers({ shouldAdvanceTime: false });
 
-      let handleWatcherLostCount = 0;
-      const emitters: any[] = [];
+      const emitters: MockFsWatcher[] = [];
 
       const watchSpy = vi.spyOn(fs, 'watch').mockImplementation(() => {
-        const { EventEmitter } = require('events');
-        const emitter = new EventEmitter();
-        emitter.close = vi.fn();
+        const emitter = makeMockWatcher();
         emitters.push(emitter);
-        return emitter as any;
+        return emitter as unknown as fs.FSWatcher;
       });
 
       const statSpy = vi.spyOn(fs, 'statSync').mockImplementation(() => {
-        return { mtimeMs: 1000 } as any;
+        return { mtimeMs: 1000 } as unknown as fs.Stats;
       });
 
       const watcher = new RegistryWatcher({
@@ -405,7 +420,6 @@ describe('RegistryWatcher', () => {
 
       // After 10 calls to handleWatcherLost, retryCount should have reached max (10)
       // Further errors should be ignored
-      const watchCountBefore = emitters.length;
       emitters[0].emit('error', new Error('watch failed'));
 
       // Advance past all retry timers
@@ -427,18 +441,16 @@ describe('RegistryWatcher', () => {
     it('should handle watch errors gracefully by re-establishing', async () => {
       vi.useFakeTimers({ shouldAdvanceTime: false });
 
-      const emitters: any[] = [];
+      const emitters: MockFsWatcher[] = [];
 
       const watchSpy = vi.spyOn(fs, 'watch').mockImplementation(() => {
-        const { EventEmitter } = require('events');
-        const emitter = new EventEmitter();
-        emitter.close = vi.fn();
+        const emitter = makeMockWatcher();
         emitters.push(emitter);
-        return emitter as any;
+        return emitter as unknown as fs.FSWatcher;
       });
 
       const statSpy = vi.spyOn(fs, 'statSync').mockImplementation(() => {
-        return { mtimeMs: 1000 } as any;
+        return { mtimeMs: 1000 } as unknown as fs.Stats;
       });
 
       const watcher = new RegistryWatcher({

@@ -1,6 +1,5 @@
 import { Command } from 'commander';
 import { HistoryStore } from '../../core/history.js';
-import { PromptHistoryEntry } from '../../types.js';
 import { ExportFormatter } from '../../core/export.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';

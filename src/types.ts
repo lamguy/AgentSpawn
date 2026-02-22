@@ -3,6 +3,27 @@ import type { Writable, Readable } from 'node:stream';
 import type { HistoryStore } from './core/history.js';
 import type { ExitClassification } from './core/restart-policy.js';
 
+export type SandboxBackend = 'docker' | 'bwrap' | 'sandbox-exec';
+
+/**
+ * Isolation level for sandboxed sessions.
+ * - permissive: write isolation only, reads and network open (default)
+ * - standard: write isolation + credential dir read-blocking + resource limits
+ * - strict:   maximum restriction; bwrap additionally blocks network (note: breaks Claude API)
+ */
+export type SandboxLevel = 'permissive' | 'standard' | 'strict';
+
+export interface SandboxOptions {
+  /** Isolation level. Default: 'permissive'. */
+  level?: SandboxLevel;
+  /** Custom Docker image (e.g. pinned digest). Default: 'debian:12-slim'. */
+  image?: string;
+  /** Memory limit for Docker/bwrap (e.g. '512m'). */
+  memoryLimit?: string;
+  /** CPU limit for Docker (e.g. 0.5). */
+  cpuLimit?: number;
+}
+
 export enum SessionState {
   Running = 'running',
   Stopped = 'stopped',
@@ -32,6 +53,13 @@ export interface SessionConfig {
   permissionMode?: string;
   promptTimeoutMs?: number;
   restartPolicy?: RestartPolicy;
+  tags?: string[];
+  sandboxed?: boolean;
+  sandboxBackend?: SandboxBackend;
+  sandboxLevel?: SandboxLevel;
+  sandboxImage?: string;
+  sandboxMemoryLimit?: string;
+  sandboxCpuLimit?: number;
 }
 
 export interface SessionInfo {
@@ -44,6 +72,12 @@ export interface SessionInfo {
   /** Number of prompts sent in this session (0 if not yet interacted) */
   promptCount: number;
   permissionMode?: string;
+  tags?: string[];
+  /** When present, this session is proxied from a remote AgentSpawn instance. Absent for all local sessions. */
+  remoteAlias?: string;
+  sandboxed?: boolean;
+  sandboxBackend?: SandboxBackend;
+  sandboxLevel?: SandboxLevel;
 }
 
 export interface RegistryEntry {
@@ -57,6 +91,14 @@ export interface RegistryEntry {
   promptCount?: number;
   permissionMode?: string;
   restartPolicy?: RestartPolicy;
+  backoffUntil?: string;
+  tags?: string[];
+  sandboxed?: boolean;
+  sandboxBackend?: SandboxBackend;
+  sandboxLevel?: SandboxLevel;
+  sandboxImage?: string;
+  sandboxMemoryLimit?: string;
+  sandboxCpuLimit?: number;
 }
 
 export interface RegistryData {
@@ -70,6 +112,8 @@ export interface ManagerOptions {
   historyStore?: HistoryStore;
   /** Override the backoff calculation (e.g. `() => 0` in tests for instant restarts). */
   backoffFn?: (attempt: number) => number;
+  /** Directory containing plugins.json (defaults to ~/.agentspawn). */
+  pluginsConfigDir?: string;
 }
 
 export interface RouterOptions {
@@ -107,6 +151,18 @@ export interface TemplateEntry {
   env?: Record<string, string>;
   restartPolicy?: RestartPolicy;
   createdAt: string;
+  sandboxed?: boolean;
+  sandboxLevel?: SandboxLevel;
+  sandboxImage?: string;
+}
+
+export interface SandboxTestResult {
+  backend: SandboxBackend;
+  level: SandboxLevel;
+  writeInsideWorkdir: boolean;
+  writeOutsideWorkdir: boolean;  // should be false (blocked)
+  readCredentialDir: boolean | null;  // null if not tested at this level
+  passed: boolean;
 }
 
 export interface TemplateData {
@@ -126,6 +182,7 @@ export interface AgentSpawnConfig {
   workspacesPath?: string;
   historyDir?: string;
   templatesPath?: string;
+  remotesPath?: string;
   logLevel: string;
   shutdownTimeoutMs: number;
 }
@@ -139,3 +196,28 @@ export interface SessionCrashedEvent {
   promptText: string | null;
   retryCount: number;
 }
+
+export interface SessionMetrics {
+  promptCount: number;
+  avgResponseTimeMs: number;
+  totalResponseChars: number;
+  estimatedTokens: number;  // totalResponseChars / 4 (rough approximation)
+  uptimeMs: number;
+}
+
+export interface RemoteEntry {
+  alias: string;
+  sshHost: string;
+  sshUser: string;
+  sshPort: number;
+  remotePort: number;
+  localPort: number;
+  addedAt: string;
+}
+
+export interface RemoteData {
+  version: number;
+  remotes: Record<string, RemoteEntry>;
+}
+
+export type TunnelStatus = 'connected' | 'disconnected' | 'error';

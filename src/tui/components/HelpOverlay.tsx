@@ -54,11 +54,8 @@ const KEY_COLUMN_WIDTH = 20;
  *
  * Dismisses on Escape or ? key press.
  */
-export function HelpOverlay({
-  scrollOffset,
-  onScroll,
-  onDismiss,
-}: HelpOverlayProps): React.ReactElement {
+export function HelpOverlay(props: HelpOverlayProps): React.ReactElement {
+  const { onScroll, onDismiss } = props;
   useInput((input, key) => {
     if (key.escape || input === '?') {
       onDismiss();

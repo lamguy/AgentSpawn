@@ -4,13 +4,12 @@ import { SessionManager } from '../../core/manager.js';
 import { Router } from '../../io/router.js';
 import { TemplateManager } from '../../core/template.js';
 import { formatStatusLine } from '../../io/formatter.js';
-import { SessionAlreadyExistsError, SpawnFailedError, TemplateNotFoundError } from '../../utils/errors.js';
-import type { RestartPolicy } from '../../types.js';
+import { SessionAlreadyExistsError, SpawnFailedError, TemplateNotFoundError, SandboxNotAvailableError, SandboxStartError } from '../../utils/errors.js';
+import type { RestartPolicy, SandboxLevel } from '../../types.js';
 
 export function registerStartCommand(
   program: Command,
   manager: SessionManager,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _router: Router,
   templateManager?: TemplateManager,
 ): void {
@@ -22,7 +21,13 @@ export function registerStartCommand(
     .option('-t, --template <name>', 'Use a session template')
     .option('--max-retries <number>', 'Maximum restart attempts (default: 3)', '3')
     .option('--retry-backoff <ms>', 'Initial backoff delay in milliseconds (default: 1000)', '1000')
-    .action(async (name: string, options: { dir?: string; permissionMode?: string; template?: string; maxRetries: string; retryBackoff: string }) => {
+    .option('--tag <tag>', 'Add a tag to this session (repeatable)', (val: string, acc: string[]) => [...acc, val], [] as string[])
+    .option('-S, --sandbox', 'Run session in a sandbox (Docker, bwrap on Linux, or sandbox-exec on macOS)')
+    .option('--sandbox-level <level>', 'Isolation level: permissive (default), standard, strict')
+    .option('--sandbox-image <image>', 'Custom Docker image for sandbox (e.g. debian@sha256:...)')
+    .option('--sandbox-memory <limit>', 'Memory limit for sandbox container (e.g. 512m)')
+    .option('--sandbox-cpu <cores>', 'CPU limit for sandbox container (e.g. 0.5)')
+    .action(async (name: string, options: { dir?: string; permissionMode?: string; template?: string; maxRetries: string; retryBackoff: string; tag: string[]; sandbox?: boolean; sandboxLevel?: string; sandboxImage?: string; sandboxMemory?: string; sandboxCpu?: string }) => {
       try {
         let workingDirectory = options.dir ? path.resolve(options.dir) : undefined;
         let permissionMode = options.permissionMode;
@@ -49,6 +54,16 @@ export function registerStartCommand(
             }
             if (template.restartPolicy) {
               templateRestartPolicy = template.restartPolicy;
+            }
+            if (!options.sandbox && template.sandboxed) {
+              // Template enables sandbox by default; CLI --sandbox overrides
+              options.sandbox = template.sandboxed;
+            }
+            if (!options.sandboxLevel && template.sandboxLevel) {
+              options.sandboxLevel = template.sandboxLevel;
+            }
+            if (!options.sandboxImage && template.sandboxImage) {
+              options.sandboxImage = template.sandboxImage;
             }
           } catch (e) {
             if (e instanceof TemplateNotFoundError) {
@@ -84,6 +99,12 @@ export function registerStartCommand(
           return;
         }
 
+        if (options.sandboxLevel && !['permissive', 'standard', 'strict'].includes(options.sandboxLevel)) {
+          console.error('Error: --sandbox-level must be permissive, standard, or strict');
+          process.exitCode = 1;
+          return;
+        }
+
         // Build restart policy: merge template defaults with CLI flags
         const restartPolicy: RestartPolicy = {
           enabled: true,
@@ -100,10 +121,21 @@ export function registerStartCommand(
           permissionMode,
           env,
           restartPolicy,
+          tags: options.tag.length > 0 ? options.tag : undefined,
+          sandboxed: options.sandbox ?? false,
+          sandboxLevel: options.sandboxLevel as SandboxLevel | undefined,
+          sandboxImage: options.sandboxImage,
+          sandboxMemoryLimit: options.sandboxMemory,
+          sandboxCpuLimit: options.sandboxCpu ? parseFloat(options.sandboxCpu) : undefined,
         });
         console.log(formatStatusLine(session.getInfo()));
       } catch (e) {
         if (e instanceof SessionAlreadyExistsError || e instanceof SpawnFailedError) {
+          console.error(`Error: ${e.message}`);
+          process.exitCode = 1;
+          return;
+        }
+        if (e instanceof SandboxNotAvailableError || e instanceof SandboxStartError) {
           console.error(`Error: ${e.message}`);
           process.exitCode = 1;
           return;

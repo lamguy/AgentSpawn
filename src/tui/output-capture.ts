@@ -38,6 +38,8 @@ export class OutputCapture {
 
   /**
    * Start capturing output from a session via its EventEmitter events.
+   *
+   * Listens to 'promptStart', 'data', 'promptComplete', 'promptError', and 'stderr'.
    */
   captureSession(sessionName: string, session: Session): void {
     if (this.listeners.has(sessionName)) {
@@ -66,10 +68,15 @@ export class OutputCapture {
       this.appendLine(sessionName, `Error: ${err.message}`, true);
     };
 
+    const onStderr = (chunk: string): void => {
+      this.appendLine(sessionName, chunk.trim(), true);
+    };
+
     session.on('promptStart', onPromptStart);
     session.on('data', onData);
     session.on('promptComplete', onPromptComplete);
     session.on('promptError', onPromptError);
+    session.on('stderr', onStderr);
 
     // Store cleanup functions
     const cleanups = [
@@ -77,6 +84,7 @@ export class OutputCapture {
       () => session.removeListener('data', onData),
       () => session.removeListener('promptComplete', onPromptComplete),
       () => session.removeListener('promptError', onPromptError),
+      () => session.removeListener('stderr', onStderr),
     ];
     this.listeners.set(sessionName, cleanups);
   }

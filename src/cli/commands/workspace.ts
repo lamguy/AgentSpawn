@@ -12,7 +12,6 @@ import {
 export function registerWorkspaceCommand(
   program: Command,
   manager: SessionManager,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _router: Router,
   workspaceManager: WorkspaceManager,
 ): void {

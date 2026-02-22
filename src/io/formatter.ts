@@ -23,7 +23,10 @@ export function formatSessionOutput(sessionName: string, line: string): string {
 
 export function formatStatusLine(info: SessionInfo): string {
   const coloredState = `${colorForState(info.state)}[${info.state}]${RESET}`;
-  return `${info.name} ${coloredState} ${info.workingDirectory} (pid: ${info.pid})`;
+  const sandboxBadge = info.sandboxed && info.sandboxBackend
+    ? ` ${BOLD}[sandbox: ${info.sandboxBackend}${info.sandboxLevel && info.sandboxLevel !== 'permissive' ? '/' + info.sandboxLevel : ''}]${RESET}`
+    : '';
+  return `${info.name} ${coloredState} ${info.workingDirectory} (pid: ${info.pid})${sandboxBadge}`;
 }
 
 export function formatSessionTable(sessions: SessionInfo[]): string {

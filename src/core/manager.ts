@@ -2,6 +2,7 @@ import { Session } from './session.js';
 import { Registry } from './registry.js';
 import {
   BroadcastResult,
+  SandboxOptions,
   SessionConfig,
   SessionInfo,
   SessionState,
@@ -9,10 +10,12 @@ import {
   RegistryEntry,
   SessionCrashedEvent,
 } from '../types.js';
-import { SessionAlreadyExistsError, SessionNotFoundError } from '../utils/errors.js';
+import { SessionAlreadyExistsError, SessionNotFoundError, SandboxNotAvailableError, SandboxStartError } from '../utils/errors.js';
+import { SandboxManager } from './sandbox.js';
 import { logger } from '../utils/logger.js';
 import { HistoryStore } from './history.js';
 import { calculateBackoff } from './restart-policy.js';
+import { PluginRunner } from './plugin-runner.js';
 import { EventEmitter } from 'node:events';
 import os from 'node:os';
 import path from 'node:path';
@@ -23,6 +26,7 @@ export class SessionManager extends EventEmitter {
   readonly registry: Registry;
   private readonly historyStore?: HistoryStore;
   private pendingRestarts: Map<string, NodeJS.Timeout> = new Map();
+  private pluginRunner: PluginRunner = PluginRunner.empty();
 
   constructor(private readonly options?: ManagerOptions) {
     super();
@@ -35,6 +39,13 @@ export class SessionManager extends EventEmitter {
     }
 
     this.registry = new Registry(registryPath);
+
+    // Load plugins asynchronously; failures are non-fatal
+    PluginRunner.load(options?.pluginsConfigDir).then((runner) => {
+      this.pluginRunner = runner;
+    }).catch((err) => {
+      logger.warn(`Failed to load plugin runner: ${err instanceof Error ? err.message : String(err)}`);
+    });
   }
 
   async init(): Promise<void> {
@@ -74,7 +85,46 @@ export class SessionManager extends EventEmitter {
       throw new SessionAlreadyExistsError(config.name);
     }
 
-    const session = new Session(config, this.options?.shutdownTimeoutMs, claudeSessionId, promptCount, retryCount);
+    let sandbox: SandboxManager | undefined;
+    if (config.sandboxed) {
+      const sandboxOptions: SandboxOptions = {
+        level: config.sandboxLevel,
+        image: config.sandboxImage,
+        memoryLimit: config.sandboxMemoryLimit,
+        cpuLimit: config.sandboxCpuLimit,
+      };
+
+      let backend = config.sandboxBackend ?? await SandboxManager.detectBackend();
+      if (!backend) throw new SandboxNotAvailableError();
+
+      sandbox = new SandboxManager(config.name, config.workingDirectory, backend, sandboxOptions);
+      try {
+        await sandbox.start();
+      } catch (e) {
+        if (backend === 'docker') {
+          // Docker failed — try platform-native backend as fallback
+          const fallback = await SandboxManager.detectPlatformNativeBackend();
+          if (fallback) {
+            logger.warn(
+              `Docker sandbox failed for session "${config.name}", falling back to ${fallback}: ${(e as Error).message}`,
+            );
+            backend = fallback;
+            sandbox = new SandboxManager(config.name, config.workingDirectory, fallback, sandboxOptions);
+            try {
+              await sandbox.start();
+            } catch (e2) {
+              throw new SandboxStartError(config.name, (e2 as Error).message);
+            }
+          } else {
+            throw new SandboxStartError(config.name, (e as Error).message);
+          }
+        } else {
+          throw new SandboxStartError(config.name, (e as Error).message);
+        }
+      }
+      config = { ...config, sandboxBackend: backend };
+    }
+    const session = new Session(config, this.options?.shutdownTimeoutMs, claudeSessionId, promptCount, retryCount, sandbox);
     await session.start();
     logger.info(`Session "${config.name}" started in ${config.workingDirectory}`);
 
@@ -90,6 +140,13 @@ export class SessionManager extends EventEmitter {
       promptCount: info.promptCount,
       permissionMode: config.permissionMode,
       restartPolicy: session.getRestartPolicy(),
+      tags: config.tags,
+      sandboxed: config.sandboxed,
+      sandboxBackend: config.sandboxBackend,
+      sandboxLevel: config.sandboxLevel,
+      sandboxImage: config.sandboxImage,
+      sandboxMemoryLimit: config.sandboxMemoryLimit,
+      sandboxCpuLimit: config.sandboxCpuLimit,
     };
 
     try {
@@ -108,6 +165,12 @@ export class SessionManager extends EventEmitter {
     this.registryEntries.set(config.name, entry);
     this.wireHistoryRecording(session, config.name);
     this.wireCrashHandling(session, config.name);
+    this.wirePluginEvents(session, config.name);
+
+    // Fire onStart plugin event (fire-and-forget)
+    this.pluginRunner.fire(config.name, 'onStart', {
+      workingDirectory: config.workingDirectory,
+    }).catch(() => { /* plugin failures are non-fatal */ });
 
     return session;
   }
@@ -129,6 +192,9 @@ export class SessionManager extends EventEmitter {
       this.sessions.delete(name);
       this.registryEntries.delete(name);
       logger.info(`Session "${name}" stopped`);
+
+      // Fire onStop plugin event (fire-and-forget)
+      this.pluginRunner.fire(name, 'onStop', {}).catch(() => { /* plugin failures are non-fatal */ });
       return;
     }
 
@@ -164,6 +230,18 @@ export class SessionManager extends EventEmitter {
     }
   }
 
+  /**
+   * Stop all sessions that have the given tag.
+   * Returns the number of sessions stopped.
+   */
+  async stopByTag(tag: string): Promise<number> {
+    const toStop = this.listSessions().filter((s) => s.tags?.includes(tag));
+    for (const info of toStop) {
+      await this.stopSession(info.name);
+    }
+    return toStop.length;
+  }
+
   getSession(name: string): Session | undefined {
     return this.sessions.get(name);
   }
@@ -194,6 +272,13 @@ export class SessionManager extends EventEmitter {
       name: entry.name,
       workingDirectory: entry.workingDirectory,
       permissionMode: entry.permissionMode,
+      tags: entry.tags,
+      sandboxed: entry.sandboxed,
+      sandboxBackend: entry.sandboxBackend,
+      sandboxLevel: entry.sandboxLevel,
+      sandboxImage: entry.sandboxImage,
+      sandboxMemoryLimit: entry.sandboxMemoryLimit,
+      sandboxCpuLimit: entry.sandboxCpuLimit,
     };
 
     return this.startSession(config, entry.claudeSessionId, entry.promptCount);
@@ -246,6 +331,10 @@ export class SessionManager extends EventEmitter {
         exitCode: entry.exitCode ?? null,
         promptCount: 0,
         permissionMode: entry.permissionMode,
+        tags: entry.tags,
+        sandboxed: entry.sandboxed,
+        sandboxBackend: entry.sandboxBackend,
+        sandboxLevel: entry.sandboxLevel,
       };
     }
 
@@ -347,6 +436,10 @@ export class SessionManager extends EventEmitter {
           exitCode: entry.exitCode ?? null,
           promptCount: 0,
           permissionMode: entry.permissionMode,
+          tags: entry.tags,
+          sandboxed: entry.sandboxed,
+          sandboxBackend: entry.sandboxBackend,
+          sandboxLevel: entry.sandboxLevel,
         });
       }
     }
@@ -365,6 +458,39 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
+   * Wire up plugin event hooks for a session.
+   * Listens to session events and fires the corresponding plugins (fire-and-forget).
+   */
+  private wirePluginEvents(session: Session, sessionName: string): void {
+    let promptStartTime: number = 0;
+
+    session.on('promptStart', (prompt: string) => {
+      promptStartTime = Date.now();
+      this.pluginRunner.fire(sessionName, 'onPrompt', { prompt }).catch(() => {
+        // plugin failures are non-fatal
+      });
+    });
+
+    session.on('promptComplete', (response: string) => {
+      const responseTimeMs = promptStartTime > 0 ? Date.now() - promptStartTime : 0;
+      promptStartTime = 0;
+      this.pluginRunner.fire(sessionName, 'onResponse', { response, responseTimeMs }).catch(() => {
+        // plugin failures are non-fatal
+      });
+    });
+
+    session.on('crashed', (event: SessionCrashedEvent) => {
+      promptStartTime = 0;
+      this.pluginRunner.fire(sessionName, 'onCrash', {
+        exitCode: event.exitCode,
+        retryCount: event.retryCount,
+      }).catch(() => {
+        // plugin failures are non-fatal
+      });
+    });
+  }
+
+  /**
    * Handle a session crash event and decide whether to restart.
    */
   private handleCrash(sessionName: string, event: SessionCrashedEvent): void {
@@ -377,7 +503,7 @@ export class SessionManager extends EventEmitter {
       return;
     }
 
-    const config = (session as any).config as SessionConfig;
+    const config = session.getConfig();
     const restartPolicy = config.restartPolicy ?? { enabled: false, maxRetries: 3 };
 
     // Check if restart policy is enabled
@@ -446,7 +572,7 @@ export class SessionManager extends EventEmitter {
     }
 
     // Extract config and state before stopping
-    const config = (session as any).config as SessionConfig;
+    const config = session.getConfig();
     const claudeSessionId = session.getSessionId();
     const promptCount = session.getInfo().promptCount;
 
@@ -493,8 +619,7 @@ export class SessionManager extends EventEmitter {
       if (entry) {
         entry.state = SessionState.Crashed;
         entry.exitCode = event.exitCode;
-        // Store backoff timestamp in a custom field (not part of RegistryEntry yet)
-        (entry as any).backoffUntil = backoffUntil.toISOString();
+        entry.backoffUntil = backoffUntil.toISOString();
       }
     });
   }

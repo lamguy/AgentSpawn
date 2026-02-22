@@ -41,6 +41,12 @@ function makeState(overrides?: Partial<TUIState>): TUIState {
     isProcessing: false,
     overlayStack: [],
     statusMessage: null,
+    splitMode: false,
+    splitPaneSessions: [null, null],
+    activePaneIndex: 0,
+    splitOutputLines: new Map(),
+    remoteSessions: [],
+    remoteErrors: [],
     ...overrides,
   };
 }

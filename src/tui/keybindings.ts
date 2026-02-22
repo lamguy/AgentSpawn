@@ -16,6 +16,11 @@ import {
   pushOverlay,
   replaceTopOverlay,
 } from './overlay-helpers.js';
+import {
+  type KeybindingConfig,
+  DEFAULT_KEYBINDINGS,
+  matchesKey,
+} from '../config/keybindings.js';
 
 /**
  * Key code constants for terminal input.
@@ -26,6 +31,8 @@ export const KEY_CODES = {
   SHIFT_TAB: '\x1b[Z',
   UP_ARROW: '\x1b[A',
   DOWN_ARROW: '\x1b[B',
+  LEFT_ARROW: '\x1b[D',
+  RIGHT_ARROW: '\x1b[C',
   ENTER: '\r',
   ESCAPE: '\x1b',
   CTRL_C: '\x03',
@@ -33,10 +40,13 @@ export const KEY_CODES = {
   BACKSPACE: '\x7f',
   LOWERCASE_Q: 'q',
   LOWERCASE_N: 'n',
+  LOWERCASE_V: 'v',
   LOWERCASE_X: 'x',
   LOWERCASE_Y: 'y',
   QUESTION_MARK: '?',
   CTRL_R: '\x12',
+  LEFT_BRACKET: '[',
+  RIGHT_BRACKET: ']',
 } as const;
 
 /**
@@ -86,6 +96,55 @@ function selectPreviousSession(state: TUIState): TUIState {
         ? state.sessions.length - 1
         : currentIndex - 1;
   return { ...state, selectedSessionName: state.sessions[previousIndex].name };
+}
+
+// ── Split mode helpers ───────────────────────────────────────────────────────
+
+/**
+ * Toggle split mode. When entering split mode, auto-populate pane sessions
+ * from the selected session (pane 0) and the next session (pane 1).
+ */
+export function toggleSplitMode(state: TUIState): TUIState {
+  if (state.splitMode) {
+    return {
+      ...state,
+      splitMode: false,
+      splitPaneSessions: [null, null],
+      activePaneIndex: 0,
+    };
+  }
+
+  // Auto-populate panes: pane 0 = selected session, pane 1 = next session
+  const sessions = state.sessions;
+  const selectedIndex = sessions.findIndex((s) => s.name === state.selectedSessionName);
+  const pane0 = sessions[selectedIndex]?.name ?? sessions[0]?.name ?? null;
+  const pane1 = sessions[(selectedIndex + 1) % sessions.length]?.name ?? null;
+
+  return {
+    ...state,
+    splitMode: true,
+    splitPaneSessions: [pane0, pane1],
+    activePaneIndex: 0,
+  };
+}
+
+/**
+ * Switch active pane in split mode. Cycles between 0 and 1.
+ */
+export function switchActivePane(state: TUIState, _direction: 'next' | 'prev'): TUIState {
+  if (!state.splitMode) return state;
+  const newIndex: 0 | 1 = state.activePaneIndex === 0 ? 1 : 0;
+  return { ...state, activePaneIndex: newIndex };
+}
+
+/**
+ * Assign the currently selected session to the active split pane.
+ */
+export function assignSessionToActivePane(state: TUIState): TUIState {
+  if (!state.splitMode || !state.selectedSessionName) return state;
+  const updated: [string | null, string | null] = [...state.splitPaneSessions] as [string | null, string | null];
+  updated[state.activePaneIndex] = state.selectedSessionName;
+  return { ...state, splitPaneSessions: updated };
 }
 
 // ── Action menu items ────────────────────────────────────────────────────────
@@ -141,72 +200,94 @@ function getActionMenuItems(state: TUIState): ActionMenuItem[] {
 export function handleNavigationKeypress(
   state: TUIState,
   key: string,
+  keybindings: Required<KeybindingConfig> = DEFAULT_KEYBINDINGS,
 ): KeyHandlerResult {
-  switch (key) {
-    case KEY_CODES.TAB:
-    case KEY_CODES.DOWN_ARROW:
-      return stateResult(selectNextSession(state));
-
-    case KEY_CODES.SHIFT_TAB:
-    case KEY_CODES.UP_ARROW:
-      return stateResult(selectPreviousSession(state));
-
-    case KEY_CODES.ENTER: {
-      if (!state.selectedSessionName) return stateResult(state);
-      return stateResult({
-        ...state,
-        attachedSessionName: state.selectedSessionName,
-        mode: 'attached',
-      });
-    }
-
-    case KEY_CODES.LOWERCASE_N:
-      return stateResult(
-        pushOverlay(state, {
-          kind: 'session-creation',
-          fields: { name: '', template: '', directory: '.', permissionMode: 'bypassPermissions' },
-          activeField: 'name',
-          errors: { name: '', template: '', directory: '', permissionMode: '' },
-          isSubmitting: false,
-        }),
-      );
-
-    case KEY_CODES.LOWERCASE_X: {
-      if (!state.selectedSessionName) return stateResult(state);
-      return stateResult(
-        pushOverlay(state, {
-          kind: 'confirmation',
-          title: `Stop session "${state.selectedSessionName}"?`,
-          message: 'This will send SIGTERM to the running process.',
-          action: {
-            kind: 'stop-session',
-            sessionName: state.selectedSessionName,
-          },
-        }),
-      );
-    }
-
-    case KEY_CODES.CTRL_A:
-      return stateResult(
-        pushOverlay(state, {
-          kind: 'action-menu',
-          selectedIndex: 0,
-          targetSessionName: state.selectedSessionName,
-        }),
-      );
-
-    case KEY_CODES.QUESTION_MARK:
-      return stateResult(
-        pushOverlay(state, { kind: 'help', scrollOffset: 0 }),
-      );
-
-    case KEY_CODES.LOWERCASE_Q:
-    case KEY_CODES.CTRL_C:
-      return quitResult();
-
-    default:
-      return stateResult(state);
+  // Configurable bindings: next/prev session, attach, stop, new, help, quit
+  if (key === KEY_CODES.TAB || key === KEY_CODES.DOWN_ARROW || matchesKey(key, keybindings.nextSession)) {
+    return stateResult(selectNextSession(state));
   }
+
+  if (key === KEY_CODES.SHIFT_TAB || key === KEY_CODES.UP_ARROW || matchesKey(key, keybindings.prevSession)) {
+    return stateResult(selectPreviousSession(state));
+  }
+
+  if (key === KEY_CODES.ENTER || matchesKey(key, keybindings.attachSession)) {
+    if (!state.selectedSessionName) return stateResult(state);
+    // In split mode, Enter assigns the selected session to the active pane
+    if (state.splitMode) {
+      return stateResult(assignSessionToActivePane(state));
+    }
+    return stateResult({
+      ...state,
+      attachedSessionName: state.selectedSessionName,
+      mode: 'attached',
+    });
+  }
+
+  if (matchesKey(key, keybindings.newSession)) {
+    return stateResult(
+      pushOverlay(state, {
+        kind: 'session-creation',
+        fields: { name: '', template: '', directory: '.', permissionMode: 'bypassPermissions' },
+        activeField: 'name',
+        errors: { name: '', template: '', directory: '', permissionMode: '' },
+        isSubmitting: false,
+      }),
+    );
+  }
+
+  if (matchesKey(key, keybindings.stopSession)) {
+    if (!state.selectedSessionName) return stateResult(state);
+    return stateResult(
+      pushOverlay(state, {
+        kind: 'confirmation',
+        title: `Stop session "${state.selectedSessionName}"?`,
+        message: 'This will send SIGTERM to the running process.',
+        action: {
+          kind: 'stop-session',
+          sessionName: state.selectedSessionName,
+        },
+      }),
+    );
+  }
+
+  if (matchesKey(key, keybindings.toggleHelp)) {
+    return stateResult(
+      pushOverlay(state, { kind: 'help', scrollOffset: 0 }),
+    );
+  }
+
+  if (matchesKey(key, keybindings.quit) || key === KEY_CODES.CTRL_C) {
+    return quitResult();
+  }
+
+  // Non-configurable: action menu (Ctrl+A)
+  if (key === KEY_CODES.CTRL_A) {
+    return stateResult(
+      pushOverlay(state, {
+        kind: 'action-menu',
+        selectedIndex: 0,
+        targetSessionName: state.selectedSessionName,
+      }),
+    );
+  }
+
+  // Split mode: 'v' toggles split view
+  if (key === KEY_CODES.LOWERCASE_V) {
+    return stateResult(toggleSplitMode(state));
+  }
+
+  // Split mode pane navigation: '['/Left arrow = prev pane, ']'/Right arrow = next pane
+  if (state.splitMode) {
+    if (key === KEY_CODES.LEFT_BRACKET || key === KEY_CODES.LEFT_ARROW) {
+      return stateResult(switchActivePane(state, 'prev'));
+    }
+    if (key === KEY_CODES.RIGHT_BRACKET || key === KEY_CODES.RIGHT_ARROW) {
+      return stateResult(switchActivePane(state, 'next'));
+    }
+  }
+
+  return stateResult(state);
 }
 
 // ── Attached mode handler ────────────────────────────────────────────────────
@@ -214,8 +295,9 @@ export function handleNavigationKeypress(
 export function handleAttachedKeypress(
   state: TUIState,
   key: string,
+  keybindings: Required<KeybindingConfig> = DEFAULT_KEYBINDINGS,
 ): KeyHandlerResult {
-  if (key === KEY_CODES.ESCAPE) {
+  if (key === KEY_CODES.ESCAPE || matchesKey(key, keybindings.detachSession)) {
     return stateResult({
       ...state,
       attachedSessionName: null,
@@ -642,10 +724,13 @@ function handleOverlayKeypress(
  * Main key press handler.
  * Checks overlay stack first (topmost overlay captures all input),
  * then falls back to base mode handler.
+ *
+ * @param keybindings - resolved keybinding config (defaults used when omitted)
  */
 export function handleKeypress(
   state: TUIState,
   key: string,
+  keybindings: Required<KeybindingConfig> = DEFAULT_KEYBINDINGS,
 ): KeyHandlerResult {
   const overlay = topOverlay(state);
 
@@ -655,8 +740,8 @@ export function handleKeypress(
 
   switch (state.mode) {
     case 'navigation':
-      return handleNavigationKeypress(state, key);
+      return handleNavigationKeypress(state, key, keybindings);
     case 'attached':
-      return handleAttachedKeypress(state, key);
+      return handleAttachedKeypress(state, key, keybindings);
   }
 }

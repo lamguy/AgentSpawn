@@ -144,6 +144,18 @@ export interface TUIState {
   statusMessage: StatusMessage | null;
   /** Pending input text to pre-fill in the InputBar (e.g., from history search) */
   pendingInput?: string | null;
+  /** Whether split-pane view is active (shows two output panes side by side) */
+  splitMode: boolean;
+  /** Names of sessions assigned to each split pane (left=index 0, right=index 1) */
+  splitPaneSessions: [string | null, string | null];
+  /** Which split pane is currently focused (0=left, 1=right) */
+  activePaneIndex: 0 | 1;
+  /** Per-session output line cache used in split mode. Keys are session names. */
+  splitOutputLines: Map<string, OutputLine[]>;
+  /** Sessions fetched from all polled remote instances. Entries carry remoteAlias. */
+  remoteSessions: SessionInfo[];
+  /** Remotes that were unreachable on the last poll cycle. */
+  remoteErrors: Array<{ alias: string; error: string }>;
 }
 
 // ── Options ─────────────────────────────────────────────────────────────────

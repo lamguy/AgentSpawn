@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { EventEmitter } from 'node:events';
 import { Command } from 'commander';
-import { registerExecCommand } from './exec.js';
+import { registerExecCommand, resolveSessionRefs } from './exec.js';
 import { SessionState } from '../../types.js';
 import type { SessionManager } from '../../core/manager.js';
 import type { Router } from '../../io/router.js';
 import type { WorkspaceManager } from '../../core/workspace.js';
-import type { Session } from '../../core/session.js';
+import type { HistoryStore } from '../../core/history.js';
 import { WorkspaceNotFoundError } from '../../utils/errors.js';
 
 // -- Mock factories ----------------------------------------------------------
@@ -13,19 +14,19 @@ import { WorkspaceNotFoundError } from '../../utils/errors.js';
 function createMockSession(
   name: string,
   state: SessionState = SessionState.Running,
-): { getState: ReturnType<typeof vi.fn>; sendPrompt: ReturnType<typeof vi.fn>; getInfo: ReturnType<typeof vi.fn> } {
-  return {
-    getState: vi.fn().mockReturnValue(state),
-    sendPrompt: vi.fn().mockResolvedValue(`response from ${name}`),
-    getInfo: vi.fn().mockReturnValue({
-      name,
-      pid: 0,
-      state,
-      startedAt: new Date(),
-      workingDirectory: `/tmp/${name}`,
-      promptCount: 0,
-    }),
-  };
+): EventEmitter & { getState: ReturnType<typeof vi.fn>; sendPrompt: ReturnType<typeof vi.fn>; getInfo: ReturnType<typeof vi.fn> } {
+  const emitter = new EventEmitter() as EventEmitter & { getState: ReturnType<typeof vi.fn>; sendPrompt: ReturnType<typeof vi.fn>; getInfo: ReturnType<typeof vi.fn> };
+  emitter.getState = vi.fn().mockReturnValue(state);
+  emitter.sendPrompt = vi.fn().mockResolvedValue(`response from ${name}`);
+  emitter.getInfo = vi.fn().mockReturnValue({
+    name,
+    pid: 0,
+    state,
+    startedAt: new Date(),
+    workingDirectory: `/tmp/${name}`,
+    promptCount: 0,
+  });
+  return emitter;
 }
 
 function createMockManager(sessions: Record<string, ReturnType<typeof createMockSession>> = {}): {
@@ -303,6 +304,304 @@ describe('exec command', () => {
 
       expect(errorSpy).toHaveBeenCalledWith("Error: Session 'stopped' is not running.");
       expect(process.exitCode).toBe(1);
+    });
+  });
+
+  describe('--pipe flag', () => {
+    let originalIsTTY: boolean | undefined;
+    let stdinSpy: ReturnType<typeof vi.spyOn> | null = null;
+
+    beforeEach(() => {
+      originalIsTTY = process.stdin.isTTY;
+    });
+
+    afterEach(() => {
+      // Restore isTTY
+      Object.defineProperty(process.stdin, 'isTTY', { value: originalIsTTY, configurable: true });
+      if (stdinSpy) {
+        stdinSpy.mockRestore();
+        stdinSpy = null;
+      }
+    });
+
+    it('should read prompt from stdin when --pipe is set and no command arg is given', async () => {
+      const session = createMockSession('my-session');
+      mockManager = createMockManager({ 'my-session': session });
+
+      program = new Command();
+      program.exitOverride();
+      registerExecCommand(
+        program,
+        mockManager as unknown as SessionManager,
+        mockRouter as unknown as Router,
+        mockWorkspaceManager as unknown as WorkspaceManager,
+      );
+
+      // Simulate non-TTY stdin with piped content
+      Object.defineProperty(process.stdin, 'isTTY', { value: false, configurable: true });
+
+      // Mock process.stdin.on to emit data then end
+      stdinSpy = vi.spyOn(process.stdin, 'on').mockImplementation((event: string, handler: (...args: unknown[]) => void) => {
+        if (event === 'data') {
+          handler(Buffer.from('fix the lint errors'));
+        }
+        if (event === 'end') {
+          handler();
+        }
+        return process.stdin;
+      });
+
+      await runCommand(program, ['exec', '--pipe', 'my-session']);
+
+      expect(session.sendPrompt).toHaveBeenCalledWith('fix the lint errors');
+    });
+
+    it('should use the command arg over stdin when both are provided', async () => {
+      const session = createMockSession('my-session');
+      mockManager = createMockManager({ 'my-session': session });
+
+      program = new Command();
+      program.exitOverride();
+      registerExecCommand(
+        program,
+        mockManager as unknown as SessionManager,
+        mockRouter as unknown as Router,
+        mockWorkspaceManager as unknown as WorkspaceManager,
+      );
+
+      // Stdin would return something, but command arg takes precedence
+      Object.defineProperty(process.stdin, 'isTTY', { value: false, configurable: true });
+      stdinSpy = vi.spyOn(process.stdin, 'on').mockImplementation(() => process.stdin);
+
+      await runCommand(program, ['exec', '--pipe', 'my-session', 'explicit prompt']);
+
+      // stdin.on should not have been called since command arg was provided
+      expect(session.sendPrompt).toHaveBeenCalledWith('explicit prompt');
+    });
+
+    it('should error when --pipe is set but stdin is empty', async () => {
+      mockManager = createMockManager({});
+
+      program = new Command();
+      program.exitOverride();
+      registerExecCommand(
+        program,
+        mockManager as unknown as SessionManager,
+        mockRouter as unknown as Router,
+        mockWorkspaceManager as unknown as WorkspaceManager,
+      );
+
+      // Simulate TTY stdin (nothing piped)
+      Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
+
+      await runCommand(program, ['exec', '--pipe', 'my-session']);
+
+      expect(errorSpy).toHaveBeenCalledWith('Error: Missing required argument <command>.');
+      expect(process.exitCode).toBe(1);
+    });
+  });
+
+  describe('@session-name reference resolution', () => {
+    function createMockHistoryStore(
+      historyBySession: Record<string, Array<{ index: number; prompt: string; responsePreview: string; timestamp: string }>>,
+    ): HistoryStore {
+      return {
+        getBySession: vi.fn().mockImplementation(async (name: string) => {
+          return historyBySession[name] ?? [];
+        }),
+      } as unknown as HistoryStore;
+    }
+
+    it('should replace @session-name with its latest response preview', async () => {
+      const historyStore = createMockHistoryStore({
+        backend: [
+          { index: 0, prompt: 'describe your API', responsePreview: 'GET /users returns a list', timestamp: '2026-01-01T00:00:00Z' },
+        ],
+      });
+
+      const result = await resolveSessionRefs(
+        "Generate TypeScript client from @backend's API spec",
+        historyStore,
+      );
+
+      expect(result).toBe("Generate TypeScript client from GET /users returns a list's API spec");
+    });
+
+    it('should leave @session-name as-is when session has no history', async () => {
+      const historyStore = createMockHistoryStore({});
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      const result = await resolveSessionRefs('use @unknown session', historyStore);
+
+      expect(result).toBe('use @unknown session');
+      expect(warnSpy).toHaveBeenCalledWith(
+        "Warning: No history found for session '@unknown', leaving reference as-is.",
+      );
+
+      warnSpy.mockRestore();
+    });
+
+    it('should return prompt unchanged when no @references exist', async () => {
+      const historyStore = createMockHistoryStore({});
+
+      const result = await resolveSessionRefs('just a plain prompt', historyStore);
+
+      expect(result).toBe('just a plain prompt');
+    });
+
+    it('should resolve multiple @references in one prompt', async () => {
+      const historyStore = createMockHistoryStore({
+        alpha: [
+          { index: 0, prompt: 'q', responsePreview: 'alpha-output', timestamp: '2026-01-01T00:00:00Z' },
+        ],
+        beta: [
+          { index: 0, prompt: 'q', responsePreview: 'beta-output', timestamp: '2026-01-01T00:00:00Z' },
+        ],
+      });
+
+      const result = await resolveSessionRefs('combine @alpha and @beta', historyStore);
+
+      expect(result).toBe('combine alpha-output and beta-output');
+    });
+
+    it('should truncate very long responses to 4000 chars', async () => {
+      const longResponse = 'x'.repeat(5000);
+      const historyStore = createMockHistoryStore({
+        bigSession: [
+          { index: 0, prompt: 'q', responsePreview: longResponse, timestamp: '2026-01-01T00:00:00Z' },
+        ],
+      });
+
+      const result = await resolveSessionRefs('use @bigSession output', historyStore);
+
+      expect(result).toContain('...[truncated]');
+      expect(result.length).toBeLessThan('use @bigSession output'.length + 5000);
+    });
+
+    it('should use latest (first) history entry when multiple exist', async () => {
+      const historyStore = createMockHistoryStore({
+        mySession: [
+          // getBySession returns most-recent first
+          { index: 1, prompt: 'q2', responsePreview: 'latest response', timestamp: '2026-01-02T00:00:00Z' },
+          { index: 0, prompt: 'q1', responsePreview: 'older response', timestamp: '2026-01-01T00:00:00Z' },
+        ],
+      });
+
+      const result = await resolveSessionRefs('context: @mySession', historyStore);
+
+      expect(result).toBe('context: latest response');
+    });
+
+    it('should resolve @session-name in exec command before sending prompt', async () => {
+      const session = createMockSession('frontend');
+      mockManager = createMockManager({ frontend: session });
+
+      const historyStore = createMockHistoryStore({
+        backend: [
+          { index: 0, prompt: 'q', responsePreview: 'POST /api/users', timestamp: '2026-01-01T00:00:00Z' },
+        ],
+      });
+
+      program = new Command();
+      program.exitOverride();
+      registerExecCommand(
+        program,
+        mockManager as unknown as SessionManager,
+        mockRouter as unknown as Router,
+        mockWorkspaceManager as unknown as WorkspaceManager,
+        historyStore,
+      );
+
+      await runCommand(program, ['exec', 'frontend', 'generate client from @backend']);
+
+      expect(session.sendPrompt).toHaveBeenCalledWith('generate client from POST /api/users');
+    });
+  });
+
+  describe('--format ndjson', () => {
+    let stdoutSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    });
+
+    afterEach(() => {
+      stdoutSpy.mockRestore();
+    });
+
+    it('should emit NDJSON chunk and done events', async () => {
+      const session = createMockSession('my-session');
+      // sendPrompt resolves with the full response
+      session.sendPrompt = vi.fn().mockResolvedValue('full response text');
+
+      mockManager = createMockManager({ 'my-session': session });
+
+      program = new Command();
+      program.exitOverride();
+      registerExecCommand(
+        program,
+        mockManager as unknown as SessionManager,
+        mockRouter as unknown as Router,
+        mockWorkspaceManager as unknown as WorkspaceManager,
+      );
+
+      await runCommand(program, ['exec', '--format', 'ndjson', 'my-session', 'run tests']);
+
+      // Should emit the done event as NDJSON
+      const writtenLines = stdoutSpy.mock.calls.map((c) => c[0] as string);
+      const doneLines = writtenLines.filter((l) => l.includes('"type":"done"'));
+      expect(doneLines).toHaveLength(1);
+      const done = JSON.parse(doneLines[0]);
+      expect(done).toEqual({ type: 'done', response: 'full response text', sessionName: 'my-session' });
+    });
+
+    it('should emit chunk events for data emitted by session', async () => {
+      const session = createMockSession('my-session');
+      // Simulate data events being emitted during sendPrompt
+      session.sendPrompt = vi.fn().mockImplementation(async () => {
+        session.emit('data', 'hello ');
+        session.emit('data', 'world');
+        return 'hello world';
+      });
+
+      mockManager = createMockManager({ 'my-session': session });
+
+      program = new Command();
+      program.exitOverride();
+      registerExecCommand(
+        program,
+        mockManager as unknown as SessionManager,
+        mockRouter as unknown as Router,
+        mockWorkspaceManager as unknown as WorkspaceManager,
+      );
+
+      await runCommand(program, ['exec', '--format', 'ndjson', 'my-session', 'run tests']);
+
+      const writtenLines = stdoutSpy.mock.calls.map((c) => c[0] as string);
+      const chunkLines = writtenLines.filter((l) => l.includes('"type":"chunk"'));
+      expect(chunkLines).toHaveLength(2);
+      expect(JSON.parse(chunkLines[0])).toEqual({ type: 'chunk', text: 'hello ' });
+      expect(JSON.parse(chunkLines[1])).toEqual({ type: 'chunk', text: 'world' });
+    });
+
+    it('should use text format by default', async () => {
+      const session = createMockSession('my-session');
+      mockManager = createMockManager({ 'my-session': session });
+
+      program = new Command();
+      program.exitOverride();
+      registerExecCommand(
+        program,
+        mockManager as unknown as SessionManager,
+        mockRouter as unknown as Router,
+        mockWorkspaceManager as unknown as WorkspaceManager,
+      );
+
+      await runCommand(program, ['exec', 'my-session', 'run tests']);
+
+      // Text format uses console.log, not process.stdout.write
+      expect(logSpy).toHaveBeenCalledWith('response from my-session');
+      expect(stdoutSpy).not.toHaveBeenCalled();
     });
   });
 });

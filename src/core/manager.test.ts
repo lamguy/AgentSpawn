@@ -11,6 +11,7 @@ import { EventEmitter } from 'node:events';
 
 vi.mock('node:child_process', () => ({
   spawn: vi.fn(),
+  execFile: vi.fn(),
 }));
 
 const mockedSpawn = vi.mocked(childProcess.spawn);
@@ -81,7 +82,7 @@ describe('SessionManager', () => {
     await fs.writeFile(registryPath, JSON.stringify(data, null, 2), 'utf-8');
 
     const originalKill = process.kill;
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     const killMock = vi.fn((_pid: number, _signal?: string | number) => {
       const err = new Error('kill ESRCH') as NodeJS.ErrnoException;
       err.code = 'ESRCH';
@@ -220,7 +221,7 @@ describe('SessionManager', () => {
     await fs.writeFile(registryPath, JSON.stringify(data, null, 2), 'utf-8');
 
     const originalKill = process.kill;
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     const killMock = vi.fn((_pid: number, _signal?: string | number) => {
       return true;
     });
@@ -675,7 +676,7 @@ describe('SessionManager', () => {
       // proper-lockfile's internal setTimeout usage which would otherwise compete
       // with real file I/O during restartSession.
       manager = new SessionManager({ registryPath, backoffFn: () => 0 });
-      vi.spyOn((manager as any).registry, 'withLock').mockResolvedValue(undefined);
+      vi.spyOn(manager.registry, 'withLock').mockResolvedValue(undefined);
     });
 
     afterEach(async () => {
@@ -919,7 +920,7 @@ describe('SessionManager', () => {
           return 0;
         },
       });
-      vi.spyOn((manager as any).registry, 'withLock').mockResolvedValue(undefined);
+      vi.spyOn(manager.registry, 'withLock').mockResolvedValue(undefined);
       await manager.init();
 
       const config: SessionConfig = {
@@ -981,6 +982,138 @@ describe('SessionManager', () => {
     expect(data.sessions['persist-policy'].restartPolicy).toEqual({
       enabled: true,
       maxRetries: 5,
+    });
+  });
+
+  describe('session tagging', () => {
+    it('startSession() persists tags in registry', async () => {
+      await manager.init();
+
+      await manager.startSession({
+        name: 'tagged-session',
+        workingDirectory: '/tmp/tagged',
+        tags: ['bug', 'urgent'],
+      });
+
+      const raw = await fs.readFile(registryPath, 'utf-8');
+      const data = JSON.parse(raw);
+      expect(data.sessions['tagged-session'].tags).toEqual(['bug', 'urgent']);
+    });
+
+    it('getInfo() returns tags from in-memory session', async () => {
+      await manager.init();
+
+      await manager.startSession({
+        name: 'tag-info-session',
+        workingDirectory: '/tmp/tag-info',
+        tags: ['feature'],
+      });
+
+      const info = manager.getSessionInfo('tag-info-session');
+      expect(info?.tags).toEqual(['feature']);
+    });
+
+    it('listSessions() returns tags for in-memory sessions', async () => {
+      await manager.init();
+
+      await manager.startSession({ name: 'a', workingDirectory: '/tmp/a', tags: ['bug'] });
+      await manager.startSession({ name: 'b', workingDirectory: '/tmp/b', tags: ['feature'] });
+      await manager.startSession({ name: 'c', workingDirectory: '/tmp/c' });
+
+      const sessions = manager.listSessions();
+      const a = sessions.find((s) => s.name === 'a');
+      const b = sessions.find((s) => s.name === 'b');
+      const c = sessions.find((s) => s.name === 'c');
+
+      expect(a?.tags).toEqual(['bug']);
+      expect(b?.tags).toEqual(['feature']);
+      expect(c?.tags).toBeUndefined();
+    });
+
+    it('listSessions() returns tags from registry-only sessions', async () => {
+      const dir = path.dirname(registryPath);
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(
+        registryPath,
+        JSON.stringify({
+          version: 1,
+          sessions: {
+            'registry-tagged': {
+              name: 'registry-tagged',
+              pid: 0,
+              state: 'running',
+              startedAt: new Date().toISOString(),
+              workingDirectory: '/tmp/reg-tagged',
+              exitCode: null,
+              tags: ['release'],
+            },
+          },
+        }),
+      );
+
+      await manager.init();
+
+      const sessions = manager.listSessions();
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0].tags).toEqual(['release']);
+    });
+
+    it('stopByTag() stops all sessions with that tag', async () => {
+      await manager.init();
+
+      await manager.startSession({ name: 'bug-1', workingDirectory: '/tmp/b1', tags: ['bug', 'urgent'] });
+      await manager.startSession({ name: 'bug-2', workingDirectory: '/tmp/b2', tags: ['bug'] });
+      await manager.startSession({ name: 'feat-1', workingDirectory: '/tmp/f1', tags: ['feature'] });
+
+      const stopped = await manager.stopByTag('bug');
+
+      expect(stopped).toBe(2);
+      expect(manager.listSessions()).toHaveLength(1);
+      expect(manager.listSessions()[0].name).toBe('feat-1');
+    });
+
+    it('stopByTag() returns 0 when no sessions match', async () => {
+      await manager.init();
+
+      await manager.startSession({ name: 'session-a', workingDirectory: '/tmp/sa', tags: ['feature'] });
+
+      const stopped = await manager.stopByTag('nonexistent-tag');
+      expect(stopped).toBe(0);
+      expect(manager.listSessions()).toHaveLength(1);
+    });
+
+    it('stopByTag() does nothing when there are no sessions', async () => {
+      await manager.init();
+
+      const stopped = await manager.stopByTag('urgent');
+      expect(stopped).toBe(0);
+    });
+
+    it('adoptSession() preserves tags from registry', async () => {
+      const data = {
+        version: 1,
+        sessions: {
+          'adopt-tagged': {
+            name: 'adopt-tagged',
+            pid: 0,
+            state: 'stopped',
+            startedAt: new Date().toISOString(),
+            workingDirectory: '/tmp/adopt-tag',
+            exitCode: null,
+            claudeSessionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+            promptCount: 1,
+            tags: ['bug', 'v2'],
+          },
+        },
+      };
+      const dir = path.dirname(registryPath);
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(registryPath, JSON.stringify(data, null, 2), 'utf-8');
+
+      await manager.init();
+
+      const adopted = await manager.adoptSession('adopt-tagged');
+      expect(adopted.getInfo().tags).toEqual(['bug', 'v2']);
     });
   });
 });

@@ -8,8 +8,10 @@ import type { Router } from '../io/router.js';
 import { logger } from '../utils/logger.js';
 import { SessionManagerAdapter, RouterAdapter } from './adapters.js';
 import { OutputCapture } from './output-capture.js';
-import type { TUIOptions, TUIState, TUIAction, StatusMessage, HistorySearchOverlayState } from './types.js';
+import type { TUIOptions, TUIState, TUIAction, StatusMessage, HistorySearchOverlayState, OutputLine } from './types.js';
 import { TUIApp } from './components/TUIApp.js';
+import { type KeybindingConfig, DEFAULT_KEYBINDINGS, loadKeybindings } from '../config/keybindings.js';
+import type { RemotePoller, RemoteSessionsEvent, RemoteErrorEvent } from './remote-poller.js';
 
 /** How long status messages persist before auto-clearing (ms). */
 const STATUS_MESSAGE_TTL = 5000;
@@ -22,6 +24,7 @@ export class TUI {
   private renderInstance: ReturnType<typeof render> | null = null;
   private registryWatcher: RegistryWatcher | null = null;
   private resizeHandler: (() => void) | null = null;
+  private keybindings: Required<KeybindingConfig> = DEFAULT_KEYBINDINGS;
 
   constructor(
     private readonly manager: SessionManager,
@@ -32,6 +35,7 @@ export class TUI {
     private readonly historyStore: HistoryStore | null,
     private readonly templateManager: TemplateManager | null,
     private readonly options?: TUIOptions,
+    private readonly remotePoller?: RemotePoller,
   ) {
     const attachedSessionName = routerAdapter.getActiveSession() ?? null;
     this.state = {
@@ -44,6 +48,12 @@ export class TUI {
       mode: attachedSessionName ? 'attached' : 'navigation',
       overlayStack: [],
       statusMessage: null,
+      splitMode: false,
+      splitPaneSessions: [null, null],
+      activePaneIndex: 0,
+      splitOutputLines: new Map(),
+      remoteSessions: [],
+      remoteErrors: [],
     };
   }
 
@@ -54,9 +64,11 @@ export class TUI {
     return {
       initialState: this.state,
       isProcessing: this.state.isProcessing,
+      keybindings: this.keybindings,
       onStateChange: (newState: TUIState) => {
         const oldMode = this.state.mode;
         const newMode = newState.mode;
+        const oldSplitPanes = this.state.splitPaneSessions;
         this.state = newState;
 
         if (oldMode !== newMode) {
@@ -64,6 +76,22 @@ export class TUI {
             this.attachToSession(newState.attachedSessionName);
           } else if (newMode === 'navigation' && oldMode === 'attached') {
             this.detachFromSession();
+          }
+        }
+
+        // When split pane assignments change, ensure output is captured for new sessions
+        if (newState.splitMode) {
+          for (let i = 0; i < 2; i++) {
+            const sessionName = newState.splitPaneSessions[i];
+            if (sessionName && sessionName !== oldSplitPanes[i]) {
+              this.ensureSession(sessionName).then((session) => {
+                if (session) {
+                  this.outputCapture.captureSession(sessionName, session);
+                }
+              }).catch(() => {
+                // Non-fatal: output just won't be captured for this session
+              });
+            }
           }
         }
       },
@@ -88,6 +116,14 @@ export class TUI {
       React.createElement(TUIApp, this.buildAppProps()),
     );
 
+    // Load keybindings from disk asynchronously; re-render once loaded
+    loadKeybindings().then((kb) => {
+      this.keybindings = kb;
+      this.forceRerender();
+    }).catch(() => {
+      // Silently keep defaults if loading fails
+    });
+
     // Watch registry for changes instead of fixed-interval polling
     this.registryWatcher = new RegistryWatcher({
       registryPath: this.manager.registry.getFilePath(),
@@ -101,6 +137,44 @@ export class TUI {
       this.forceRerender();
     };
     process.stdout.on('resize', this.resizeHandler);
+
+    // Start remote polling if a poller was provided
+    if (this.remotePoller) {
+      this.remotePoller.on('sessions', (event: RemoteSessionsEvent) => {
+        // Replace all entries for this alias with fresh data
+        const other = this.state.remoteSessions.filter(
+          (s) => s.remoteAlias !== event.alias,
+        );
+        this.state.remoteSessions = [...other, ...event.sessions];
+
+        // Clear any existing error for this alias (it's now reachable)
+        this.state.remoteErrors = this.state.remoteErrors.filter(
+          (e) => e.alias !== event.alias,
+        );
+
+        this.forceRerender();
+      });
+
+      this.remotePoller.on('remoteError', (event: RemoteErrorEvent) => {
+        // Drop stale sessions for this alias when it becomes unreachable
+        this.state.remoteSessions = this.state.remoteSessions.filter(
+          (s) => s.remoteAlias !== event.alias,
+        );
+
+        // Upsert the error entry
+        const without = this.state.remoteErrors.filter(
+          (e) => e.alias !== event.alias,
+        );
+        this.state.remoteErrors = [
+          ...without,
+          { alias: event.alias, error: event.error },
+        ];
+
+        this.forceRerender();
+      });
+
+      this.remotePoller.start();
+    }
   }
 
   /**
@@ -122,6 +196,13 @@ export class TUI {
     if (this.renderInstance) {
       this.renderInstance.unmount();
       this.renderInstance = null;
+    }
+
+    // Stop remote poller and close all tunnels
+    if (this.remotePoller) {
+      this.remotePoller.stop().catch(() => {
+        // Non-fatal — tunnels may already be closed
+      });
     }
   }
 
@@ -153,6 +234,17 @@ export class TUI {
       this.state.outputLines = this.outputCapture.getLines(outputSessionName);
     } else {
       this.state.outputLines = [];
+    }
+
+    // Update split-pane output if split mode is active
+    if (this.state.splitMode) {
+      const splitMap = new Map<string, OutputLine[]>();
+      for (const sessionName of this.state.splitPaneSessions) {
+        if (sessionName) {
+          splitMap.set(sessionName, this.outputCapture.getLines(sessionName));
+        }
+      }
+      this.state.splitOutputLines = splitMap;
     }
 
     // Auto-clear expired status messages
@@ -486,7 +578,7 @@ export class TUI {
 export function launchTUI(
   manager: SessionManager,
   router: Router,
-  options?: TUIOptions & { historyStore?: HistoryStore; templateManager?: TemplateManager },
+  options?: TUIOptions & { historyStore?: HistoryStore; templateManager?: TemplateManager; remotePoller?: RemotePoller },
 ): TUI {
   const managerAdapter = new SessionManagerAdapter(manager);
   const routerAdapter = new RouterAdapter(router);
@@ -506,6 +598,7 @@ export function launchTUI(
     options?.historyStore ?? null,
     options?.templateManager ?? null,
     options,
+    options?.remotePoller,
   );
   tui.start();
 

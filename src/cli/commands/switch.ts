@@ -7,7 +7,7 @@ import readline from 'node:readline';
 export function registerSwitchCommand(
   program: Command,
   manager: SessionManager,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+   
   _router: Router,
 ): void {
   program

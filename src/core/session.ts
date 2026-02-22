@@ -1,11 +1,12 @@
 import { spawn, ChildProcess } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
-import { SessionState, SessionConfig, SessionInfo, SessionCrashedEvent, RestartPolicy } from '../types.js';
+import { SessionState, SessionConfig, SessionInfo, SessionCrashedEvent, SessionMetrics, RestartPolicy } from '../types.js';
 import { logger } from '../utils/logger.js';
 import { PromptTimeoutError } from '../utils/errors.js';
 import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
 import { classifyExitCode } from './restart-policy.js';
+import { SandboxManager } from './sandbox.js';
 
 /**
  * Session — represents a conversation with Claude Code.
@@ -25,6 +26,9 @@ export class Session extends EventEmitter {
   private restartPolicy: RestartPolicy;
   private lastPrompt: string | null = null;
   private retryCount: number = 0;
+  private responseTimes: number[] = [];
+  private totalResponseChars: number = 0;
+  private promptStartTime: number = 0;
 
   constructor(
     private readonly config: SessionConfig,
@@ -32,6 +36,7 @@ export class Session extends EventEmitter {
     initialSessionId?: string,
     initialPromptCount?: number,
     initialRetryCount: number = 0,
+    private readonly sandbox?: SandboxManager,
   ) {
     super();
     this.claudeSessionId = initialSessionId ?? crypto.randomUUID();
@@ -69,6 +74,9 @@ export class Session extends EventEmitter {
     // Store the prompt for crash recovery
     this.lastPrompt = prompt;
 
+    // Record start time for response-time tracking
+    this.promptStartTime = Date.now();
+
     logger.info(`Sending prompt to session "${this.config.name}"`);
     this.emit('promptStart', prompt);
 
@@ -99,7 +107,10 @@ export class Session extends EventEmitter {
         args.push('--permission-mode', this.config.permissionMode);
       }
 
-      const child = spawn('claude', args, {
+      const { cmd, args: spawnArgs } = this.sandbox
+        ? this.sandbox.buildSpawnArgs(args)
+        : { cmd: 'claude', args };
+      const child = spawn(cmd, spawnArgs, {
         cwd: this.config.workingDirectory,
         env: { ...process.env, ...this.config.env },
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -185,7 +196,10 @@ export class Session extends EventEmitter {
         settle();
 
         if (code === 0) {
-          // Success — reset retry count
+          // Success — record metrics and reset retry count
+          const elapsedMs = Date.now() - this.promptStartTime;
+          this.responseTimes.push(elapsedMs);
+          this.totalResponseChars += response.length;
           this.retryCount = 0;
           logger.info(`Prompt completed for session "${this.config.name}"`);
           this.emit('promptComplete', response);
@@ -326,6 +340,8 @@ export class Session extends EventEmitter {
       }
       this.activeProcess = null;
     }
+
+    await this.sandbox?.stop();
   }
 
   getState(): SessionState {
@@ -342,6 +358,27 @@ export class Session extends EventEmitter {
       exitCode: this.exitCode,
       promptCount: this.promptCount,
       permissionMode: this.config.permissionMode,
+      tags: this.config.tags,
+      sandboxed: this.sandbox !== undefined,
+      sandboxBackend: this.sandbox?.getBackend(),
+      sandboxLevel: this.sandbox?.getLevel(),
+    };
+  }
+
+  getMetrics(): SessionMetrics {
+    const avgResponseTimeMs =
+      this.responseTimes.length > 0
+        ? this.responseTimes.reduce((sum, t) => sum + t, 0) / this.responseTimes.length
+        : 0;
+
+    const uptimeMs = this.startedAt ? Date.now() - this.startedAt.getTime() : 0;
+
+    return {
+      promptCount: this.promptCount,
+      avgResponseTimeMs,
+      totalResponseChars: this.totalResponseChars,
+      estimatedTokens: Math.round(this.totalResponseChars / 4),
+      uptimeMs,
     };
   }
 
@@ -359,6 +396,10 @@ export class Session extends EventEmitter {
 
   getLastPrompt(): string | null {
     return this.lastPrompt;
+  }
+
+  getConfig(): SessionConfig {
+    return this.config;
   }
 
   getRestartPolicy(): RestartPolicy {

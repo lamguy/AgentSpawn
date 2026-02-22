@@ -5,7 +5,6 @@ import { SessionState } from '../../types.js';
 import type { PromptHistoryEntry } from '../../types.js';
 import type { SessionManager } from '../../core/manager.js';
 import type { HistoryStore, HistorySearchResult } from '../../core/history.js';
-import type { Session } from '../../core/session.js';
 
 // ── Mock factories ────────────────────────────────────────────────────────────
 
