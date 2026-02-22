@@ -1,28 +1,16 @@
 import React from 'react';
 import { Box, Text, useInput } from 'ink';
+import { ARCADE_COLORS } from '../theme/arcade.js';
 
-/**
- * ConfirmationDialog component props.
- */
 export interface ConfirmationDialogProps {
-  /** Title displayed in the dialog header (e.g., "Stop Session") */
   title: string;
-  /** Descriptive message explaining what will happen */
   message: string;
-  /** Callback when user confirms the action */
   onConfirm: () => void;
-  /** Callback when user cancels the action */
   onCancel: () => void;
 }
 
 /**
- * ConfirmationDialog - A double-bordered modal for confirming destructive actions.
- *
- * Renders a small centered dialog with a red accent border, a bold title,
- * descriptive message text, and footer instructions for confirming or canceling.
- *
- * - Press `y` or Enter to confirm
- * - Press `n` or Escape to cancel
+ * ConfirmationDialog — arcade WARNING screen for destructive actions.
  */
 export function ConfirmationDialog({
   title,
@@ -31,50 +19,40 @@ export function ConfirmationDialog({
   onCancel,
 }: ConfirmationDialogProps): React.ReactElement {
   useInput((input, key) => {
-    if (input === 'y' || key.return) {
-      onConfirm();
-      return;
-    }
-
-    if (input === 'n' || key.escape) {
-      onCancel();
-      return;
-    }
+    if (input === 'y' || key.return) { onConfirm(); return; }
+    if (input === 'n' || key.escape) { onCancel();  return; }
   });
 
   return (
-    <Box
-      flexDirection="column"
-      alignItems="center"
-      justifyContent="center"
-      flexGrow={1}
-    >
+    <Box flexDirection="column" alignItems="center" justifyContent="center" flexGrow={1}>
       <Box
         flexDirection="column"
         borderStyle="double"
-        borderColor="red"
+        borderColor={ARCADE_COLORS.laserRed}
         paddingX={2}
         paddingY={1}
-        width={40}
+        width={44}
       >
+        {/* Warning header */}
+        <Box justifyContent="center" marginBottom={1}>
+          <Text bold color={ARCADE_COLORS.laserRed}>!! WARNING !!</Text>
+        </Box>
+
         {/* Title */}
         <Box marginBottom={1}>
-          <Text bold>{title}</Text>
+          <Text bold color={ARCADE_COLORS.ghostWhite}>{title}</Text>
         </Box>
 
         {/* Message */}
         <Box>
-          <Text dimColor>{message}</Text>
+          <Text color={ARCADE_COLORS.scanlineGray}>{message}</Text>
         </Box>
 
-        {/* Footer: confirm/cancel hints */}
+        {/* Confirm / Cancel */}
         <Box justifyContent="center" marginTop={1}>
-          <Text>
-            <Text bold color="green">[y]</Text>
-            <Text> Confirm  </Text>
-            <Text bold color="red">[n]</Text>
-            <Text> Cancel</Text>
-          </Text>
+          <Text bold color={ARCADE_COLORS.neonGreen}>[Y] CONFIRM</Text>
+          <Text color={ARCADE_COLORS.phosphorGray}>  </Text>
+          <Text bold color={ARCADE_COLORS.laserRed}>[N] ABORT</Text>
         </Box>
       </Box>
     </Box>

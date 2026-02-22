@@ -17,26 +17,26 @@ describe('SessionCreationDialog', () => {
 
   it('should render the title', () => {
     const { lastFrame } = render(<SessionCreationDialog {...defaults} />);
-    expect(lastFrame()).toContain('New Session');
+    expect(lastFrame()).toContain('INSERT COIN');
   });
 
   it('should render both field labels', () => {
     const { lastFrame } = render(<SessionCreationDialog {...defaults} />);
     const output = lastFrame() || '';
-    expect(output).toContain('Name:');
-    expect(output).toContain('Directory:');
+    expect(output).toContain('PLAYER NAME:');
+    expect(output).toContain('ARENA:');
   });
 
   it('should render template field', () => {
     const { lastFrame } = render(<SessionCreationDialog {...defaults} />);
     const output = lastFrame() || '';
-    expect(output).toContain('Template (optional):');
+    expect(output).toContain('TEMPLATE (OPTIONAL):');
   });
 
   it('should render permission mode field', () => {
     const { lastFrame } = render(<SessionCreationDialog {...defaults} />);
     const output = lastFrame() || '';
-    expect(output).toContain('Permission Mode:');
+    expect(output).toContain('PERMISSION MODE:');
   });
 
   it('should render field values when provided', () => {
@@ -66,13 +66,13 @@ describe('SessionCreationDialog', () => {
     const { lastFrame } = render(
       <SessionCreationDialog {...defaults} isSubmitting={true} />,
     );
-    expect(lastFrame()).toContain('Creating...');
+    expect(lastFrame()).toContain('LOADING PLAYER...');
   });
 
   it('should render footer hints', () => {
     const { lastFrame } = render(<SessionCreationDialog {...defaults} />);
     const output = lastFrame() || '';
     expect(output).toContain('Tab to switch fields');
-    expect(output).toContain('Enter to create');
+    expect(output).toContain('Enter to deploy');
   });
 });

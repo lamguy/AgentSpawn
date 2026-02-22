@@ -8,7 +8,7 @@ describe('HelpOverlay', () => {
     const { lastFrame } = render(
       <HelpOverlay scrollOffset={0} onScroll={vi.fn()} onDismiss={vi.fn()} />,
     );
-    expect(lastFrame()).toContain('AgentSpawn Keyboard Shortcuts');
+    expect(lastFrame()).toContain('HOW TO PLAY');
   });
 
   it('should render navigation shortcuts section', () => {
@@ -16,11 +16,11 @@ describe('HelpOverlay', () => {
       <HelpOverlay scrollOffset={0} onScroll={vi.fn()} onDismiss={vi.fn()} />,
     );
     const output = lastFrame() || '';
-    expect(output).toContain('NAVIGATION');
+    expect(output).toContain('SELECT PLAYER MODE');
     expect(output).toContain('Tab');
-    expect(output).toContain('Next session');
+    expect(output).toContain('Next player');
     expect(output).toContain('Enter');
-    expect(output).toContain('Attach to session');
+    expect(output).toContain('PRESS START');
   });
 
   it('should render attached mode shortcuts section', () => {
@@ -28,9 +28,9 @@ describe('HelpOverlay', () => {
       <HelpOverlay scrollOffset={0} onScroll={vi.fn()} onDismiss={vi.fn()} />,
     );
     const output = lastFrame() || '';
-    expect(output).toContain('ATTACHED MODE');
+    expect(output).toContain('IN GAME MODE');
     expect(output).toContain('Esc');
-    expect(output).toContain('Detach from session');
+    expect(output).toContain('PAUSE GAME');
   });
 
   it('should render global shortcuts section', () => {
@@ -38,14 +38,14 @@ describe('HelpOverlay', () => {
       <HelpOverlay scrollOffset={0} onScroll={vi.fn()} onDismiss={vi.fn()} />,
     );
     const output = lastFrame() || '';
-    expect(output).toContain('GLOBAL');
-    expect(output).toContain('Toggle this help');
+    expect(output).toContain('UNIVERSAL');
+    expect(output).toContain('Toggle HOW TO PLAY');
   });
 
   it('should render dismiss hint', () => {
     const { lastFrame } = render(
       <HelpOverlay scrollOffset={0} onScroll={vi.fn()} onDismiss={vi.fn()} />,
     );
-    expect(lastFrame()).toContain('Press Esc or ? to close');
+    expect(lastFrame()).toContain('PRESS [Esc] OR [?] TO CLOSE');
   });
 });

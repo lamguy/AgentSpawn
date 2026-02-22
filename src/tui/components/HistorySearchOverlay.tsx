@@ -1,6 +1,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import type { PromptHistoryEntry } from '../../types.js';
+import { ARCADE_COLORS, ARCADE_DECOR } from '../theme/arcade.js';
 
 export interface HistorySearchOverlayProps {
   query: string;
@@ -13,33 +14,22 @@ const MAX_PROMPT_LENGTH = 60;
 const VISIBLE_RESULTS = 10;
 
 function formatRelativeTime(timestamp: string): string {
-  const now = Date.now();
-  const then = new Date(timestamp).getTime();
-  const diffMs = now - then;
-
-  const seconds = Math.floor(diffMs / 1000);
-  if (seconds < 60) return `${seconds}s ago`;
-
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  const diffMs = Date.now() - new Date(timestamp).getTime();
+  const s = Math.floor(diffMs / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
 }
 
 function truncate(text: string, maxLen: number): string {
-  if (text.length <= maxLen) return text;
-  return text.slice(0, maxLen - 3) + '...';
+  return text.length <= maxLen ? text : text.slice(0, maxLen - 3) + '...';
 }
 
 /**
- * HistorySearchOverlay - A centered modal for searching prompt history.
- *
- * Shows a search input and scrollable results list. Follows existing
- * overlay patterns (double border, centered, keyboard-driven).
+ * HistorySearchOverlay — REPLAY SEARCH screen.
  */
 export function HistorySearchOverlay({
   query,
@@ -49,61 +39,56 @@ export function HistorySearchOverlay({
 }: HistorySearchOverlayProps): React.ReactElement {
   const hasResults = results.length > 0;
 
-  // Compute visible window for scrolling
   const scrollStart = Math.max(
     0,
-    Math.min(
-      selectedIndex - Math.floor(VISIBLE_RESULTS / 2),
-      results.length - VISIBLE_RESULTS,
-    ),
+    Math.min(selectedIndex - Math.floor(VISIBLE_RESULTS / 2), results.length - VISIBLE_RESULTS),
   );
   const visibleResults = results.slice(scrollStart, scrollStart + VISIBLE_RESULTS);
 
   return (
-    <Box
-      flexDirection="column"
-      alignItems="center"
-      justifyContent="center"
-      flexGrow={1}
-    >
+    <Box flexDirection="column" alignItems="center" justifyContent="center" flexGrow={1}>
       <Box
         flexDirection="column"
         borderStyle="double"
-        borderColor="yellow"
+        borderColor={ARCADE_COLORS.acidYellow}
         paddingX={2}
         paddingY={1}
         width={72}
       >
         {/* Title */}
         <Box justifyContent="center" marginBottom={1}>
-          <Text bold>History Search (Ctrl+R)</Text>
+          <Text bold color={ARCADE_COLORS.acidYellow}>
+            {ARCADE_DECOR.sectionTitle('REPLAY SEARCH')}
+          </Text>
         </Box>
 
         {/* Search input */}
         <Box flexDirection="row" marginBottom={1}>
-          <Text color="cyan" bold>{'> '}</Text>
-          <Text>{query}</Text>
+          <Text bold color={ARCADE_COLORS.neonCyan}>{'>>'} </Text>
+          <Text color={ARCADE_COLORS.ghostWhite}>{query}</Text>
           <Text inverse> </Text>
-          {isLoading && <Text color="yellow"> searching...</Text>}
+          {isLoading && <Text color={ARCADE_COLORS.acidYellow}> searching...</Text>}
         </Box>
 
-        {/* Results */}
+        {/* Empty / no-results states */}
         {!hasResults && query.length === 0 && (
           <Box justifyContent="center" paddingY={1}>
-            <Text dimColor>Type to search prompt history</Text>
+            <Text color={ARCADE_COLORS.phosphorGray}>TYPE TO SEARCH PAST MOVES</Text>
           </Box>
         )}
 
         {!hasResults && query.length > 0 && !isLoading && (
           <Box justifyContent="center" paddingY={1}>
-            <Text dimColor>No results for &quot;{truncate(query, 30)}&quot;</Text>
+            <Text color={ARCADE_COLORS.phosphorGray}>
+              NO REPLAYS FOUND FOR &quot;{truncate(query, 30)}&quot;
+            </Text>
           </Box>
         )}
 
         {hasResults && (
           <Box flexDirection="column">
             <Box marginBottom={0}>
-              <Text dimColor>
+              <Text color={ARCADE_COLORS.phosphorGray}>
                 {results.length} result{results.length !== 1 ? 's' : ''}
               </Text>
             </Box>
@@ -116,16 +101,16 @@ export function HistorySearchOverlay({
                   flexDirection="row"
                   gap={1}
                 >
-                  <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
-                    {isSelected ? '>' : ' '}
+                  <Text bold color={isSelected ? ARCADE_COLORS.neonCyan : undefined}>
+                    {isSelected ? ARCADE_DECOR.cursorSelected : '   '}
                   </Text>
                   <Text
-                    color={isSelected ? 'cyan' : undefined}
                     bold={isSelected}
+                    color={isSelected ? ARCADE_COLORS.neonCyan : ARCADE_COLORS.ghostWhite}
                   >
                     {truncate(entry.prompt, MAX_PROMPT_LENGTH)}
                   </Text>
-                  <Text dimColor>
+                  <Text color={ARCADE_COLORS.phosphorGray}>
                     {formatRelativeTime(entry.timestamp)}
                   </Text>
                 </Box>
@@ -136,8 +121,8 @@ export function HistorySearchOverlay({
 
         {/* Footer */}
         <Box justifyContent="center" marginTop={1}>
-          <Text dimColor>
-            {'\u2191\u2193'} navigate  Enter select  Esc close
+          <Text color={ARCADE_COLORS.phosphorGray}>
+            {'\u2191\u2193'} navigate{ARCADE_DECOR.separator}Enter select{ARCADE_DECOR.separator}Esc close
           </Text>
         </Box>
       </Box>

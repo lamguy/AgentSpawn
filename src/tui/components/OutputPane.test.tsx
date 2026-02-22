@@ -12,8 +12,8 @@ describe('OutputPane', () => {
       <OutputPane session={null} outputLines={[]} />,
     );
 
-    expect(lastFrame()).toContain('Select a session to view output');
-    expect(lastFrame()).toContain('or press n to create a new one');
+    expect(lastFrame()).toContain('SELECT A PLAYER TO VIEW GAME FEED');
+    expect(lastFrame()).toContain('or press n to INSERT COIN');
   });
 
   it('renders session header with name and status', () => {
@@ -30,9 +30,9 @@ describe('OutputPane', () => {
       <OutputPane session={mockSession} outputLines={[]} />,
     );
 
-    expect(lastFrame()).toContain('Output:');
+    expect(lastFrame()).toContain('GAME FEED:');
     expect(lastFrame()).toContain('test-session');
-    expect(lastFrame()).toContain('running');
+    expect(lastFrame()).toContain('IN PLAY');
   });
 
   it('shows status symbol for running sessions', () => {
@@ -49,8 +49,8 @@ describe('OutputPane', () => {
       <OutputPane session={mockSession} outputLines={[]} />,
     );
 
-    // Running uses filled circle
-    expect(lastFrame()).toContain('\u25CF');
+    // Running uses arcade [+] symbol
+    expect(lastFrame()).toContain('[+]');
   });
 
   it('shows stopped status for stopped sessions', () => {
@@ -67,9 +67,9 @@ describe('OutputPane', () => {
       <OutputPane session={mockSession} outputLines={[]} />,
     );
 
-    expect(lastFrame()).toContain('stopped');
-    // Stopped uses empty circle
-    expect(lastFrame()).toContain('\u25CB');
+    expect(lastFrame()).toContain('GAME OVER');
+    // Stopped uses arcade [-] symbol
+    expect(lastFrame()).toContain('[-]');
   });
 
   it('renders output lines with timestamps', () => {
@@ -121,8 +121,8 @@ describe('OutputPane', () => {
       <OutputPane session={mockSession} outputLines={[]} />,
     );
 
-    expect(lastFrame()).toContain('test-session - No output yet');
-    expect(lastFrame()).toContain('Press Enter to attach and send prompts');
+    expect(lastFrame()).toContain('NO OUTPUT YET');
+    expect(lastFrame()).toContain('Press Enter to attach and send moves');
   });
 
   it('renders output lines with content', () => {

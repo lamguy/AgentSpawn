@@ -1,14 +1,10 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import type { TUIState, OverlayState, StatusMessage } from '../types.js';
+import { ARCADE_COLORS, ARCADE_MODES, ARCADE_DECOR } from '../theme/arcade.js';
 
-/**
- * StatusBar component props.
- */
 export interface StatusBarProps {
-  /** Current TUI state */
   state: TUIState;
-  /** Version string (e.g., "v0.1.0") */
   version?: string;
 }
 
@@ -17,44 +13,37 @@ interface ShortcutDef {
   action: string;
 }
 
-/**
- * Get the mode badge label and colors based on current state.
- */
 function getModeBadge(
   mode: TUIState['mode'],
   topOverlay: OverlayState | null,
   splitMode: boolean,
 ): { label: string; bgColor?: string; fgColor: string } {
-  // Overlay takes priority over base mode
   if (topOverlay) {
     switch (topOverlay.kind) {
       case 'help':
-        return { label: ' HELP ', bgColor: 'yellow', fgColor: 'black' };
+        return { label: ARCADE_MODES.help.label, bgColor: ARCADE_MODES.help.bg, fgColor: ARCADE_MODES.help.fg };
       case 'action-menu':
-        return { label: ' MENU ', bgColor: 'blue', fgColor: 'black' };
+        return { label: ARCADE_MODES.actionMenu.label, bgColor: ARCADE_MODES.actionMenu.bg, fgColor: ARCADE_MODES.actionMenu.fg };
       case 'session-creation':
-        return { label: ' NEW SESSION ', bgColor: 'yellow', fgColor: 'black' };
+        return { label: ARCADE_MODES.sessionCreation.label, bgColor: ARCADE_MODES.sessionCreation.bg, fgColor: ARCADE_MODES.sessionCreation.fg };
       case 'confirmation':
-        return { label: ' CONFIRM ', bgColor: 'yellow', fgColor: 'black' };
+        return { label: ARCADE_MODES.confirmation.label, bgColor: ARCADE_MODES.confirmation.bg, fgColor: ARCADE_MODES.confirmation.fg };
     }
   }
 
   if (splitMode) {
-    return { label: ' SPLIT ', bgColor: 'cyan', fgColor: 'black' };
+    return { label: ARCADE_MODES.split.label, bgColor: ARCADE_MODES.split.bg, fgColor: ARCADE_MODES.split.fg };
   }
 
   switch (mode) {
     case 'attached':
-      return { label: ' ATTACHED ', bgColor: 'magenta', fgColor: 'black' };
+      return { label: ARCADE_MODES.attached.label, bgColor: ARCADE_MODES.attached.bg, fgColor: ARCADE_MODES.attached.fg };
     case 'navigation':
     default:
-      return { label: ' NAV ', fgColor: 'cyan' };
+      return { label: ARCADE_MODES.navigation.label, bgColor: ARCADE_MODES.navigation.bg, fgColor: ARCADE_MODES.navigation.fg };
   }
 }
 
-/**
- * Get context-sensitive shortcuts based on current mode and overlay.
- */
 function getShortcuts(
   mode: TUIState['mode'],
   topOverlay: OverlayState | null,
@@ -76,114 +65,88 @@ function getShortcuts(
       case 'session-creation':
         return [
           { key: 'Tab', action: 'switch field' },
-          { key: 'Enter', action: 'create' },
-          { key: 'Esc', action: 'cancel' },
+          { key: 'Enter', action: 'deploy' },
+          { key: 'Esc', action: 'abort' },
         ];
       case 'confirmation':
         return [
           { key: 'y', action: 'confirm' },
-          { key: 'n', action: 'cancel' },
+          { key: 'n', action: 'abort' },
         ];
     }
   }
 
   if (splitMode) {
     return [
-      { key: 'Tab', action: 'next session' },
-      { key: 'Enter', action: 'assign pane' },
-      { key: '[/]', action: 'switch pane' },
-      { key: 'v', action: 'exit split' },
-      { key: '?', action: 'help' },
+      { key: 'Tab', action: 'next' },
+      { key: 'Enter', action: 'assign' },
+      { key: '[/]', action: 'switch' },
+      { key: 'v', action: 'exit VERSUS' },
+      { key: '?', action: 'HOW TO PLAY' },
     ];
   }
 
   switch (mode) {
     case 'attached':
       return [
-        { key: 'Esc', action: 'detach' },
+        { key: 'Esc', action: 'PAUSE' },
         { key: 'Ctrl+C', action: 'clear' },
       ];
     case 'navigation':
     default:
       return [
         { key: 'Tab', action: 'next' },
-        { key: 'Enter', action: 'attach' },
-        { key: 'v', action: 'split' },
-        { key: 'n', action: 'new' },
-        { key: 'x', action: 'stop' },
-        { key: '?', action: 'help' },
-        { key: ':', action: 'menu' },
+        { key: 'Enter', action: 'START' },
+        { key: 'n', action: 'COIN' },
+        { key: '?', action: 'HOW' },
+        { key: ':', action: 'CMD' },
       ];
   }
 }
 
-/**
- * Get the color for a status message level.
- */
 function getStatusMessageColor(level: StatusMessage['level']): string {
   switch (level) {
-    case 'success':
-      return 'green';
-    case 'error':
-      return 'red';
+    case 'success': return ARCADE_COLORS.neonGreen;
+    case 'error':   return ARCADE_COLORS.laserRed;
     case 'info':
-    default:
-      return 'cyan';
+    default:        return ARCADE_COLORS.neonCyan;
   }
 }
 
 /**
- * StatusBar component -- displays persistent bottom bar with mode badge,
- * context-sensitive keyboard shortcuts, and session metadata.
+ * StatusBar — arcade score bar with mode badge, hints, and player/score counters.
  *
  * Layout:
  * ```
- * [mode-badge] | {shortcuts or status message}           | {metadata}
+ * [MODE BADGE] :: key ACTION  key ACTION ...        PLAYERS:03 :: SCORE:000042
  * ```
- *
- * The mode badge reflects the current mode or active overlay:
- * - NAV: cyan text (no background)
- * - ATTACHED: magenta background, black text
- * - HELP/MENU/NEW SESSION/CONFIRM: yellow/blue background, black text
- *
- * Shortcuts change based on context. When a status message is active,
- * it replaces the shortcuts area with a colored message.
  */
-export function StatusBar({
-  state,
-  version,
-}: StatusBarProps): React.ReactElement {
+export function StatusBar({ state, version }: StatusBarProps): React.ReactElement {
   const sessionCount = state.sessions.length;
 
-  // Determine the top overlay (if any)
-  const topOverlay =
+  const topOverlayItem =
     state.overlayStack && state.overlayStack.length > 0
       ? state.overlayStack[state.overlayStack.length - 1]
       : null;
 
-  const badge = getModeBadge(state.mode, topOverlay, state.splitMode);
-  const shortcuts = getShortcuts(state.mode, topOverlay, state.splitMode);
+  const badge = getModeBadge(state.mode, topOverlayItem, state.splitMode);
+  const shortcuts = getShortcuts(state.mode, topOverlayItem, state.splitMode);
 
-  // Check for active (non-expired) status message
   const statusMessage =
     state.statusMessage && state.statusMessage.expiresAt > Date.now()
       ? state.statusMessage
       : null;
 
-  // Session count string
-  const sessionCountStr =
-    sessionCount === 0
-      ? 'no sessions'
-      : `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`;
+  const playerCountStr = `PLAYERS:${String(sessionCount).padStart(2, '0')}`;
+  const totalPrompts = state.sessions.reduce((sum, s) => sum + (s.promptCount ?? 0), 0);
+  const scoreStr = `SCORE:${String(totalPrompts).padStart(6, '0')}`;
 
-  // Remote error summary (if any remotes are unreachable)
   const remoteErrors = state.remoteErrors ?? [];
 
   return (
     <Box flexDirection="row" justifyContent="space-between" paddingX={1}>
-      {/* Left: mode badge + shortcuts/status message */}
+      {/* Left: mode badge + hints/status */}
       <Box flexDirection="row" gap={0}>
-        {/* Mode badge */}
         {badge.bgColor ? (
           <Text bold backgroundColor={badge.bgColor} color={badge.fgColor}>
             {badge.label}
@@ -194,9 +157,8 @@ export function StatusBar({
           </Text>
         )}
 
-        <Text color="gray"> | </Text>
+        <Text color={ARCADE_COLORS.phosphorGray}>{ARCADE_DECOR.separator}</Text>
 
-        {/* Shortcuts or status message */}
         {statusMessage ? (
           <Text color={getStatusMessageColor(statusMessage.level)} bold>
             {statusMessage.text}
@@ -205,35 +167,34 @@ export function StatusBar({
           <Box flexDirection="row" gap={0}>
             {shortcuts.map(({ key, action }, index) => (
               <Box key={key + action} flexDirection="row" gap={0}>
-                {index > 0 && <Text>  </Text>}
-                <Text bold color="cyan">
-                  {key}
-                </Text>
-                <Text dimColor> {action}</Text>
+                {index > 0 && <Text color={ARCADE_COLORS.phosphorGray}>  </Text>}
+                <Text bold color={ARCADE_COLORS.neonCyan}>{key}</Text>
+                <Text color={ARCADE_COLORS.scanlineGray}> {action}</Text>
               </Box>
             ))}
           </Box>
         )}
 
-        {/* Remote error warnings */}
         {remoteErrors.length > 0 && (
           <Box flexDirection="row" gap={0} marginLeft={2}>
             {remoteErrors.map(({ alias }) => (
-              <Text key={alias} dimColor>
-                {'  '}! {alias}: unreachable
+              <Text key={alias} color={ARCADE_COLORS.laserRed}>
+                {'  '}[!] {alias}: unreachable
               </Text>
             ))}
           </Box>
         )}
       </Box>
 
-      {/* Right: metadata */}
+      {/* Right: player count + score */}
       <Box flexDirection="row" gap={0}>
-        <Text color="cyan">{sessionCountStr}</Text>
+        <Text bold color={ARCADE_COLORS.acidYellow}>{playerCountStr}</Text>
+        <Text color={ARCADE_COLORS.phosphorGray}>{ARCADE_DECOR.separator}</Text>
+        <Text bold color={ARCADE_COLORS.arcadeOrange}>{scoreStr}</Text>
         {version && (
           <>
-            <Text dimColor>  </Text>
-            <Text dimColor>{version}</Text>
+            <Text color={ARCADE_COLORS.phosphorGray}>{ARCADE_DECOR.separator}</Text>
+            <Text color={ARCADE_COLORS.phosphorGray}>{version}</Text>
           </>
         )}
       </Box>
