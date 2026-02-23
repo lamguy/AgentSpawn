@@ -1,11 +1,11 @@
 Output docs/screenshots/tests.gif
 
 Set Shell "bash"
-Set FontSize 14
+Set FontSize 13
 Set Width 900
-Set Height 600
+Set Height 650
 Set Theme "Dracula"
 
-Type "npx vitest run"
+Type "npm test"
 Enter
-Sleep 12s
+Sleep 35s

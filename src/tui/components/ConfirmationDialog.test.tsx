@@ -24,9 +24,9 @@ describe('ConfirmationDialog', () => {
   it('should render confirm and cancel hints', () => {
     const { lastFrame } = render(<ConfirmationDialog {...defaults} />);
     const output = lastFrame() || '';
-    expect(output).toContain('[y]');
-    expect(output).toContain('Confirm');
-    expect(output).toContain('[n]');
-    expect(output).toContain('Cancel');
+    expect(output).toContain('[Y]');
+    expect(output).toContain('CONFIRM');
+    expect(output).toContain('[N]');
+    expect(output).toContain('ABORT');
   });
 });

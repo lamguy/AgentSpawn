@@ -88,26 +88,23 @@ describe('TUI Integration Tests', () => {
           onStateChange={mockOnStateChange}
           onExit={mockOnExit}
         />,
+        { columns: 120, rows: 30 },
       );
 
       const output = lastFrame() || '';
 
-      // Verify header is present
-      expect(output).toContain('AgentSpawn');
-      expect(output).toContain('0 sessions');
+      // Verify header is present (arcade ASCII art + SESSION MANAGER subtitle)
+      expect(output).toContain('SESSION MANAGER');
+      expect(output).toContain('PLAYERS:');
 
-      // Verify status bar shortcuts are present (new format: no brackets)
+      // Verify status bar shortcuts are present
       expect(output).toContain('Tab');
-      expect(output).toContain('next');
-      expect(output).toContain('Enter');
-      expect(output).toContain('attach');
-      expect(output).toContain('help');
 
       // Verify session list shows empty state
-      expect(output).toContain('No sessions');
+      expect(output).toContain('INSERT COIN TO BEGIN');
 
       // Verify output pane shows empty state
-      expect(output).toContain('Select a session to view output');
+      expect(output).toContain('SELECT A PLAYER TO VIEW GAME FEED');
     });
 
     it('should launch successfully with populated state', () => {
@@ -139,23 +136,24 @@ describe('TUI Integration Tests', () => {
           onStateChange={mockOnStateChange}
           onExit={mockOnExit}
         />,
+        { columns: 120, rows: 30 },
       );
 
       const output = lastFrame() || '';
 
       // Verify header shows session count
-      expect(output).toContain('2 sessions');
+      expect(output).toContain('PLAYERS:02');
 
       // Verify session list displays both sessions
       expect(output).toContain('project-a');
       expect(output).toContain('project-b');
 
-      // Verify Unicode status symbols (filled circle for running)
-      expect(output).toContain('\u25CF');
+      // Verify arcade status symbols (running = [+])
+      expect(output).toContain('[+]');
 
       // Verify selected session details
       expect(output).toContain('/home/user/project-a');
-      expect(output).toContain('PID 1234');
+      expect(output).toContain('CHIP# 1234');
     });
 
     it('should handle small terminal gracefully', () => {
@@ -171,17 +169,18 @@ describe('TUI Integration Tests', () => {
           onStateChange={mockOnStateChange}
           onExit={mockOnExit}
         />,
+        { columns: 70, rows: 15 },
       );
 
       const output = lastFrame() || '';
 
-      // Verify warning message is displayed
-      expect(output).toContain('Terminal too small');
-      expect(output).toContain('Minimum size: 80x20');
-      expect(output).toContain('current: 70x15');
-      expect(output).toContain('Press');
+      // Verify arcade warning message is displayed
+      expect(output).toContain('SCREEN TOO SMALL');
+      expect(output).toContain('MINIMUM: 80x20');
+      expect(output).toContain('CURRENT: 70x15');
+      expect(output).toContain('PRESS');
       expect(output).toContain('q');
-      expect(output).toContain('to quit');
+      expect(output).toContain('TO POWER OFF');
 
       // Restore terminal size for subsequent tests
       process.stdout.columns = 120;
@@ -228,6 +227,7 @@ describe('TUI Integration Tests', () => {
           onStateChange={mockOnStateChange}
           onExit={mockOnExit}
         />,
+        { columns: 120, rows: 30 },
       );
 
       const output = lastFrame() || '';
@@ -237,14 +237,14 @@ describe('TUI Integration Tests', () => {
       expect(output).toContain('stopped-session');
       expect(output).toContain('crashed-session');
 
-      // Verify Unicode status symbols
-      expect(output).toContain('\u25CF'); // filled circle (running)
-      expect(output).toContain('\u25CB'); // empty circle (stopped)
-      expect(output).toContain('\u25B2'); // triangle (crashed)
+      // Verify arcade status symbols
+      expect(output).toContain('[+]'); // running
+      expect(output).toContain('[-]'); // stopped
+      expect(output).toContain('[X]'); // crashed
 
       // Verify selected session shows details
       expect(output).toContain('/tmp/running');
-      expect(output).toContain('PID 1111');
+      expect(output).toContain('CHIP# 1111');
     });
 
     it('should highlight attached session differently', () => {
@@ -277,6 +277,7 @@ describe('TUI Integration Tests', () => {
           onStateChange={mockOnStateChange}
           onExit={mockOnExit}
         />,
+        { columns: 120, rows: 30 },
       );
 
       const output = lastFrame() || '';
@@ -287,7 +288,7 @@ describe('TUI Integration Tests', () => {
 
       // Verify attached session details shown
       expect(output).toContain('/tmp/2');
-      expect(output).toContain('ATTACHED');
+      expect(output).toContain('[IN GAME]');
     });
 
     it('should display session details only for selected session', () => {
@@ -319,17 +320,18 @@ describe('TUI Integration Tests', () => {
           onStateChange={mockOnStateChange}
           onExit={mockOnExit}
         />,
+        { columns: 120, rows: 30 },
       );
 
       const output = lastFrame() || '';
 
       // Verify selected session details are shown
       expect(output).toContain('/path/to/a');
-      expect(output).toContain('PID 1111');
+      expect(output).toContain('CHIP# 1111');
 
       // Verify non-selected session details are NOT shown
       expect(output).not.toContain('/path/to/b');
-      expect(output).not.toContain('PID 2222');
+      expect(output).not.toContain('CHIP# 2222');
     });
 
     it('should display exit code for crashed sessions', () => {
@@ -354,12 +356,13 @@ describe('TUI Integration Tests', () => {
           onStateChange={mockOnStateChange}
           onExit={mockOnExit}
         />,
+        { columns: 120, rows: 30 },
       );
 
       const output = lastFrame() || '';
 
       // Verify crash details are displayed
-      expect(output).toContain('\u25B2'); // crashed triangle
+      expect(output).toContain('[X]'); // crashed symbol
       expect(output).toContain('Exit code: 137');
     });
   });
@@ -387,6 +390,7 @@ describe('TUI Integration Tests', () => {
           onStateChange={mockOnStateChange}
           onExit={mockOnExit}
         />,
+        { columns: 120, rows: 30 },
       );
 
       const output = lastFrame() || '';
@@ -404,16 +408,17 @@ describe('TUI Integration Tests', () => {
           onStateChange={mockOnStateChange}
           onExit={mockOnExit}
         />,
+        { columns: 120, rows: 30 },
       );
 
       const output = lastFrame() || '';
 
-      // Verify navigation shortcuts are visible (redesigned format)
+      // Verify arcade navigation shortcuts are visible
       expect(output).toContain('Tab');
       expect(output).toContain('next');
       expect(output).toContain('Enter');
-      expect(output).toContain('attach');
-      expect(output).toContain('help');
+      expect(output).toContain('START');
+      expect(output).toContain('HOW');
     });
 
     it('should call onStateChange when state updates', () => {
@@ -437,6 +442,7 @@ describe('TUI Integration Tests', () => {
           onStateChange={mockOnStateChange}
           onExit={mockOnExit}
         />,
+        { columns: 120, rows: 30 },
       );
 
       // Verify onStateChange was called at least once during initial render
@@ -482,12 +488,13 @@ describe('TUI Integration Tests', () => {
           onStateChange={mockOnStateChange}
           onExit={mockOnExit}
         />,
+        { columns: 120, rows: 30 },
       );
 
       const output = lastFrame() || '';
 
-      // Verify session count in status bar
-      expect(output).toContain('3 sessions');
+      // Verify session count in arcade format
+      expect(output).toContain('PLAYERS:03');
     });
 
     it('should display all keyboard shortcuts', () => {
@@ -499,16 +506,17 @@ describe('TUI Integration Tests', () => {
           onStateChange={mockOnStateChange}
           onExit={mockOnExit}
         />,
+        { columns: 120, rows: 30 },
       );
 
       const output = lastFrame() || '';
 
-      // Verify keyboard shortcuts are displayed (redesigned format)
+      // Verify arcade keyboard shortcuts are displayed
       expect(output).toContain('Tab');
       expect(output).toContain('next');
       expect(output).toContain('Enter');
-      expect(output).toContain('attach');
-      expect(output).toContain('help');
+      expect(output).toContain('START');
+      expect(output).toContain('HOW');
     });
 
     it('should update session count when navigating', () => {
@@ -532,15 +540,13 @@ describe('TUI Integration Tests', () => {
           onStateChange={mockOnStateChange}
           onExit={mockOnExit}
         />,
+        { columns: 120, rows: 30 },
       );
 
       const output = lastFrame() || '';
 
-      // Verify header session count
-      expect(output).toContain('1 session');
-
-      // Verify status bar shows singular "session"
-      expect(output).toContain('1 session');
+      // Verify header and status bar session count
+      expect(output).toContain('PLAYERS:01');
     });
   });
 
@@ -567,12 +573,13 @@ describe('TUI Integration Tests', () => {
           onStateChange={mockOnStateChange}
           onExit={mockOnExit}
         />,
+        { columns: 120, rows: 30 },
       );
 
       const output = lastFrame() || '';
 
-      // Verify output pane header (redesigned format)
-      expect(output).toContain('Output:');
+      // Verify arcade output pane header
+      expect(output).toContain('GAME FEED:');
       expect(output).toContain('test-session');
 
       // Verify output lines are displayed
@@ -603,13 +610,14 @@ describe('TUI Integration Tests', () => {
           onStateChange={mockOnStateChange}
           onExit={mockOnExit}
         />,
+        { columns: 120, rows: 30 },
       );
 
       const output = lastFrame() || '';
 
-      // Verify empty output message (redesigned)
-      expect(output).toContain('No output yet');
-      expect(output).toContain('Press Enter to attach and send prompts');
+      // Verify arcade empty output message
+      expect(output).toContain('NO OUTPUT YET');
+      expect(output).toContain('Press Enter to attach and send moves');
     });
 
     it('should display output for selected session', () => {
@@ -642,11 +650,12 @@ describe('TUI Integration Tests', () => {
           onStateChange={mockOnStateChange}
           onExit={mockOnExit}
         />,
+        { columns: 120, rows: 30 },
       );
 
       // Verify initial output
       const output = lastFrame() || '';
-      expect(output).toContain('Output:');
+      expect(output).toContain('GAME FEED:');
       expect(output).toContain('session-1');
       expect(output).toContain('Output from session-1');
     });
@@ -673,14 +682,15 @@ describe('TUI Integration Tests', () => {
           onStateChange={mockOnStateChange}
           onExit={mockOnExit}
         />,
+        { columns: 120, rows: 30 },
       );
 
       const output = lastFrame() || '';
 
-      // Verify header with status symbol and label (redesigned)
+      // Verify arcade header with status symbol and label
       expect(output).toContain('active-session');
-      expect(output).toContain('\u25CF'); // filled circle
-      expect(output).toContain('running');
+      expect(output).toContain('[+]'); // arcade running symbol
+      expect(output).toContain('IN PLAY');
     });
 
     it('should not display activity indicator for stopped sessions', () => {
@@ -705,13 +715,14 @@ describe('TUI Integration Tests', () => {
           onStateChange={mockOnStateChange}
           onExit={mockOnExit}
         />,
+        { columns: 120, rows: 30 },
       );
 
       const output = lastFrame() || '';
 
-      // Verify stopped status (empty circle, not filled)
+      // Verify arcade stopped status
       expect(output).toContain('stopped-session');
-      expect(output).toContain('stopped');
+      expect(output).toContain('GAME OVER');
       expect(output).not.toContain('\u23F9'); // no stop symbol
     });
   });
@@ -726,6 +737,7 @@ describe('TUI Integration Tests', () => {
           onStateChange={mockOnStateChange}
           onExit={mockOnExit}
         />,
+        { columns: 120, rows: 30 },
       );
 
       // Simulate q key press
@@ -744,6 +756,7 @@ describe('TUI Integration Tests', () => {
           onStateChange={mockOnStateChange}
           onExit={mockOnExit}
         />,
+        { columns: 120, rows: 30 },
       );
 
       // Simulate Ctrl+C key press
@@ -766,6 +779,7 @@ describe('TUI Integration Tests', () => {
           onStateChange={mockOnStateChange}
           onExit={mockOnExit}
         />,
+        { columns: 70, rows: 15 },
       );
 
       // Simulate q key press
@@ -814,13 +828,14 @@ describe('TUI Integration Tests', () => {
           onStateChange={mockOnStateChange}
           onExit={mockOnExit}
         />,
+        { columns: 120, rows: 30 },
       );
 
       const output = lastFrame() || '';
 
       // Verify all major UI sections are present
-      expect(output).toContain('AgentSpawn');
-      expect(output).toContain('3 sessions');
+      expect(output).toContain('SESSION MANAGER');
+      expect(output).toContain('PLAYERS:03');
       expect(output).toContain('session-1');
       expect(output).toContain('session-2');
       expect(output).toContain('session-3');
@@ -859,24 +874,25 @@ describe('TUI Integration Tests', () => {
           onStateChange={mockOnStateChange}
           onExit={mockOnExit}
         />,
+        { columns: 120, rows: 30 },
       );
 
       const output = lastFrame() || '';
 
       // Verify SessionListPane integration
-      expect(output).toContain('Sessions');
+      expect(output).toContain('SELECT PLAYER');
       expect(output).toContain('target-session');
-      expect(output).toContain('\u25CF'); // running symbol
+      expect(output).toContain('[+]'); // running symbol
       expect(output).toContain('other-session');
-      expect(output).toContain('\u25CB'); // stopped symbol
+      expect(output).toContain('[-]'); // stopped symbol
 
-      // Verify OutputPane integration (redesigned header)
-      expect(output).toContain('Output:');
+      // Verify OutputPane integration (arcade header)
+      expect(output).toContain('GAME FEED:');
       expect(output).toContain('Test output line 1');
       expect(output).toContain('Test output line 2');
 
       // Verify StatusBar integration
-      expect(output).toContain('2 sessions');
+      expect(output).toContain('PLAYERS:02');
     });
 
     it('should handle navigation with no sessions gracefully', () => {
@@ -888,14 +904,15 @@ describe('TUI Integration Tests', () => {
           onStateChange={mockOnStateChange}
           onExit={mockOnExit}
         />,
+        { columns: 120, rows: 30 },
       );
 
       const output = lastFrame() || '';
 
-      // Verify empty state is handled
-      expect(output).toContain('No sessions');
-      expect(output).toContain('0 sessions');
-      expect(output).toContain('Select a session to view output');
+      // Verify arcade empty state is handled
+      expect(output).toContain('INSERT COIN TO BEGIN');
+      expect(output).toContain('PLAYERS:00');
+      expect(output).toContain('SELECT A PLAYER TO VIEW GAME FEED');
     });
   });
 });

@@ -39,21 +39,21 @@ describe('HistorySearchOverlay', () => {
     const { lastFrame } = render(
       <HistorySearchOverlay {...defaultProps()} />,
     );
-    expect(lastFrame()).toContain('History Search (Ctrl+R)');
+    expect(lastFrame()).toContain('REPLAY SEARCH');
   });
 
   it('should show "Type to search prompt history" when query is empty and no results', () => {
     const { lastFrame } = render(
       <HistorySearchOverlay {...defaultProps({ query: '' })} />,
     );
-    expect(lastFrame()).toContain('Type to search prompt history');
+    expect(lastFrame()).toContain('TYPE TO SEARCH PAST MOVES');
   });
 
   it('should not show "Type to search" when query is non-empty', () => {
     const { lastFrame } = render(
       <HistorySearchOverlay {...defaultProps({ query: 'fix' })} />,
     );
-    expect(lastFrame()).not.toContain('Type to search prompt history');
+    expect(lastFrame()).not.toContain('TYPE TO SEARCH PAST MOVES');
   });
 
   it('should show "No results" when query has no matches', () => {
@@ -63,7 +63,7 @@ describe('HistorySearchOverlay', () => {
       />,
     );
     const output = lastFrame() || '';
-    expect(output).toContain('No results');
+    expect(output).toContain('NO REPLAYS FOUND');
     expect(output).toContain('nonexistent');
   });
 

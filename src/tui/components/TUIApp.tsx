@@ -14,6 +14,7 @@ import { HistorySearchOverlay } from './HistorySearchOverlay.js';
 import { handleKeypress } from '../keybindings.js';
 import { topOverlay } from '../overlay-helpers.js';
 import { type KeybindingConfig, DEFAULT_KEYBINDINGS } from '../../config/keybindings.js';
+import { ARCADE_COLORS, ARCADE_HEADER_COMPACT, ARCADE_DECOR } from '../theme/arcade.js';
 
 /**
  * TUIApp component props.
@@ -36,13 +37,13 @@ export interface TUIAppProps {
 }
 
 /**
- * Main TUI application component.
+ * Main TUI application component — retro arcade cabinet aesthetic.
  *
- * Renders a professional layout with:
- * - Header: styled title bar with session count and mode indicator
- * - Body: Two-column layout (SessionListPane | OutputPane) or overlay when active
- * - Input bar: visible only in attached mode
- * - Footer: StatusBar with mode badges and context-sensitive shortcuts
+ * Renders:
+ * - Header: ASCII art title + player count + score
+ * - Body: Session list (SELECT PLAYER) + output pane (GAME FEED) or overlays
+ * - Input bar: visible only in IN GAME mode
+ * - Footer: StatusBar with arcade mode badges and context-sensitive hints
  */
 export function TUIApp({
   initialState,
@@ -55,22 +56,16 @@ export function TUIApp({
 }: TUIAppProps): React.ReactElement {
   const [state, setState] = useState<TUIState>(initialState);
 
-  // Detect terminal size for graceful degradation
   const terminalWidth = process.stdout.columns || 80;
   const terminalHeight = process.stdout.rows || 24;
   const isSmallTerminal = terminalWidth < 80 || terminalHeight < 20;
 
   const isAttached = state.mode === 'attached';
   const activeOverlay = topOverlay(state);
-
-  // Handle keyboard input
-  // Overlay stack takes priority, then base mode (navigation/attached)
-  // Disabled when session-creation overlay is active (it handles its own text input)
   const isSessionCreation = activeOverlay?.kind === 'session-creation';
 
   useInput(
     (input, key) => {
-      // Map Ink key events to raw key codes
       let keyCode: string;
 
       if (key.return) {
@@ -119,15 +114,12 @@ export function TUIApp({
     { isActive: !isSessionCreation },
   );
 
-  // Notify parent of state changes
   useEffect(() => {
     if (onStateChange) {
       onStateChange(state);
     }
   }, [state, onStateChange]);
 
-  // Determine which session to display in the output pane:
-  // attached session takes priority, then selected session
   const displaySessionName =
     isAttached && state.attachedSessionName
       ? state.attachedSessionName
@@ -136,34 +128,38 @@ export function TUIApp({
     (s) => s.name === displaySessionName,
   ) ?? null;
 
-  // Output lines now carry full metadata (timestamp, isError) from OutputCapture
   const outputLines = state.outputLines;
 
-  // Render small terminal warning if terminal is too small
+  // Total prompt count across all sessions (used as SCORE)
+  const totalPrompts = state.sessions.reduce(
+    (sum, s) => sum + (s.promptCount ?? 0), 0,
+  );
+  const playerCount = state.sessions.length + state.remoteSessions.length;
+
+  // Small terminal warning — arcade style
   if (isSmallTerminal) {
     return (
       <Box flexDirection="column" padding={2}>
-        <Text bold color="yellow">
-          Terminal too small
+        <Text bold color={ARCADE_COLORS.acidYellow}>
+          !! SCREEN TOO SMALL !!
         </Text>
-        <Text>
-          Minimum size: 80x20 (current: {terminalWidth}x{terminalHeight})
+        <Text color={ARCADE_COLORS.ghostWhite}>
+          MINIMUM: 80x20  CURRENT: {terminalWidth}x{terminalHeight}
         </Text>
         <Box marginTop={1}>
-          <Text dimColor>
-            Please resize your terminal or use the CLI commands instead.
+          <Text color={ARCADE_COLORS.phosphorGray}>
+            RESIZE TERMINAL OR USE CLI COMMANDS
           </Text>
         </Box>
         <Box marginTop={1}>
-          <Text dimColor>Press </Text>
-          <Text color="cyan">q</Text>
-          <Text dimColor> to quit</Text>
+          <Text color={ARCADE_COLORS.phosphorGray}>PRESS </Text>
+          <Text bold color={ARCADE_COLORS.neonCyan}>q</Text>
+          <Text color={ARCADE_COLORS.phosphorGray}> TO POWER OFF</Text>
         </Box>
       </Box>
     );
   }
 
-  // Render the active overlay content (replaces body when active)
   const renderOverlay = (): React.ReactElement | null => {
     if (!activeOverlay) return null;
 
@@ -213,7 +209,6 @@ export function TUIApp({
             errors={activeOverlay.errors}
             isSubmitting={activeOverlay.isSubmitting}
             onFieldChange={(field, value) => {
-              // Direct state update for form fields
               const newOverlay = {
                 ...activeOverlay,
                 fields: { ...activeOverlay.fields, [field]: value },
@@ -278,49 +273,59 @@ export function TUIApp({
 
   return (
     <Box flexDirection="column" height="100%">
-      {/* Header: Professional title bar */}
+      {/* Header: ASCII art + player count + score */}
       <Box
-        flexDirection="row"
-        justifyContent="space-between"
+        flexDirection="column"
         paddingX={1}
-        borderStyle="single"
+        borderStyle="double"
         borderBottom
+        borderColor={ARCADE_COLORS.neonCyan}
       >
-        <Box flexDirection="row" gap={1}>
-          <Text bold color="cyan">⚡</Text>
-          <Text bold>AgentSpawn</Text>
-          {isAttached && state.attachedSessionName && (
-            <Text color="magenta" inverse bold>
-              {' '}ATTACHED: {state.attachedSessionName}{' '}
+        {/* ASCII art title */}
+        {ARCADE_HEADER_COMPACT.map((line, i) => (
+          <Text key={i} bold color={ARCADE_COLORS.neonCyan}>{line}</Text>
+        ))}
+        {/* Subtitle row */}
+        <Box flexDirection="row" justifyContent="space-between" marginTop={0}>
+          <Box flexDirection="row" gap={1}>
+            <Text color={ARCADE_COLORS.acidYellow}>
+              {ARCADE_DECOR.sectionTitle('SESSION MANAGER')}
             </Text>
-          )}
-          {state.splitMode && (
-            <Text color="cyan" inverse bold>
-              {' '}SPLIT{' '}
-            </Text>
-          )}
+            {isAttached && state.attachedSessionName && (
+              <Text
+                bold
+                backgroundColor={ARCADE_COLORS.hotPink}
+                color="#000000"
+              >
+                {' '}[IN GAME: {state.attachedSessionName}]{' '}
+              </Text>
+            )}
+            {state.splitMode && (
+              <Text
+                bold
+                backgroundColor={ARCADE_COLORS.electricPurple}
+                color="#000000"
+              >
+                {' '}[VERSUS MODE]{' '}
+              </Text>
+            )}
+          </Box>
+          <Text color={ARCADE_COLORS.arcadeOrange}>
+            PLAYERS: {String(playerCount).padStart(2, '0')}
+            {ARCADE_DECOR.separator}
+            SCORE: {String(totalPrompts).padStart(6, '0')}
+          </Text>
         </Box>
-        <Text dimColor>
-          {state.sessions.length + state.remoteSessions.length}{' '}
-          {state.sessions.length + state.remoteSessions.length === 1 ? 'session' : 'sessions'}
-        </Text>
       </Box>
 
-      {/* Body: Overlay replaces content, or show two-column / split layout */}
+      {/* Body */}
       {activeOverlay ? (
         <Box flexGrow={1} flexDirection="column" justifyContent="center" alignItems="center" paddingY={1}>
           {renderOverlay()}
         </Box>
       ) : state.splitMode ? (
         <Box flexDirection="row" flexGrow={1}>
-          {/* Left column: Session list (narrower in split mode) */}
-          <Box
-            width="20%"
-            borderStyle="single"
-            borderRight
-            flexDirection="column"
-            paddingY={1}
-          >
+          <Box width="20%" borderStyle="single" borderRight flexDirection="column" paddingY={1}>
             <SessionListPane
               sessions={state.sessions}
               selectedSessionName={state.selectedSessionName}
@@ -328,8 +333,6 @@ export function TUIApp({
               remoteSessions={state.remoteSessions}
             />
           </Box>
-
-          {/* Right: Split pane showing two sessions side by side */}
           <Box width="80%" flexDirection="column">
             <SplitPane
               leftSession={state.sessions.find((s) => s.name === state.splitPaneSessions[0]) ?? null}
@@ -341,14 +344,7 @@ export function TUIApp({
         </Box>
       ) : (
         <Box flexDirection="row" flexGrow={1}>
-          {/* Left column: Session list */}
-          <Box
-            width="30%"
-            borderStyle="single"
-            borderRight
-            flexDirection="column"
-            paddingY={1}
-          >
+          <Box width="30%" borderStyle="single" borderRight flexDirection="column" paddingY={1}>
             <SessionListPane
               sessions={state.sessions}
               selectedSessionName={state.selectedSessionName}
@@ -356,18 +352,13 @@ export function TUIApp({
               remoteSessions={state.remoteSessions}
             />
           </Box>
-
-          {/* Right column: Output pane */}
           <Box width="70%" flexDirection="column" paddingY={1} paddingX={1}>
-            <OutputPane
-              session={displaySession}
-              outputLines={outputLines}
-            />
+            <OutputPane session={displaySession} outputLines={outputLines} />
           </Box>
         </Box>
       )}
 
-      {/* Input bar: visible only in attached mode (and no overlay) */}
+      {/* Input bar: IN GAME mode only */}
       {isAttached && state.attachedSessionName && !activeOverlay && (
         <InputBar
           isActive={isAttached}
@@ -385,8 +376,8 @@ export function TUIApp({
         />
       )}
 
-      {/* Footer: Status bar */}
-      <Box borderStyle="single" borderTop>
+      {/* Footer */}
+      <Box borderStyle="double" borderTop borderColor={ARCADE_COLORS.neonCyan}>
         <StatusBar state={state} />
       </Box>
     </Box>

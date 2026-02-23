@@ -1,0 +1,268 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 400" width="800" height="400">
+  <defs>
+    <!-- Neon glow filter -->
+    <filter id="neon-glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="4" result="blur1"/>
+      <feGaussianBlur stdDeviation="8" result="blur2"/>
+      <feComposite in="blur1" in2="SourceGraphic" operator="over" result="glow1"/>
+      <feComposite in="blur2" in2="glow1" operator="over" result="glow2"/>
+      <feBlend in="SourceGraphic" in2="glow2" mode="lighten"/>
+    </filter>
+
+    <!-- Stronger glow for lead agent -->
+    <filter id="neon-glow-strong" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="6" result="blur1"/>
+      <feGaussianBlur stdDeviation="12" result="blur2"/>
+      <feComposite in="blur1" in2="SourceGraphic" operator="over" result="glow1"/>
+      <feComposite in="blur2" in2="glow1" operator="over" result="glow2"/>
+      <feBlend in="SourceGraphic" in2="glow2" mode="lighten"/>
+    </filter>
+
+    <!-- Text glow -->
+    <filter id="text-glow" x="-10%" y="-30%" width="120%" height="160%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feComposite in="blur" in2="SourceGraphic" operator="over" result="glow"/>
+      <feBlend in="SourceGraphic" in2="glow" mode="lighten"/>
+    </filter>
+
+    <!-- Scanline pattern -->
+    <pattern id="scanlines" x="0" y="0" width="1" height="4" patternUnits="userSpaceOnUse">
+      <line x1="0" y1="0" x2="800" y2="0" stroke="#FFFFFF" stroke-width="0.5" opacity="0.05"/>
+    </pattern>
+  </defs>
+
+  <!-- Background -->
+  <rect width="800" height="400" fill="#0A0A0F"/>
+
+  <!-- Scanlines overlay -->
+  <rect width="800" height="400" fill="url(#scanlines)"/>
+
+  <!-- ==================== AGENT DEFINITIONS ==================== -->
+  <!-- Lead Agent (center-front) - CYAN #00F5FF, 55px tall -->
+  <!-- Position: 400, 115 -->
+  <g filter="url(#neon-glow-strong)">
+    <!-- Motion trail (behind = above in Y) -->
+    <line x1="400" y1="88" x2="400" y2="75" stroke="#00F5FF" stroke-width="2.5" opacity="0.6"/>
+    <line x1="400" y1="88" x2="400" y2="68" stroke="#00F5FF" stroke-width="1.8" opacity="0.35"/>
+    <line x1="400" y1="88" x2="400" y2="60" stroke="#00F5FF" stroke-width="1" opacity="0.15"/>
+
+    <!-- Body -->
+    <rect x="385" y="90" width="30" height="36" rx="3" fill="#001A2A" stroke="#00F5FF" stroke-width="1.5"/>
+    <!-- Screen face -->
+    <rect x="390" y="95" width="20" height="14" rx="2" fill="#00F5FF" opacity="0.9"/>
+    <!-- Eyes (small rects inside screen) -->
+    <rect x="393" y="98" width="5" height="4" rx="1" fill="#001A2A"/>
+    <rect x="401" y="98" width="5" height="4" rx="1" fill="#001A2A"/>
+    <!-- Mouth line -->
+    <line x1="393" y1="105" x2="407" y2="105" stroke="#001A2A" stroke-width="1.5"/>
+    <!-- Head -->
+    <rect x="388" y="82" width="24" height="10" rx="2" fill="#001A2A" stroke="#00F5FF" stroke-width="1.2"/>
+    <!-- Antenna -->
+    <line x1="400" y1="82" x2="400" y2="75" stroke="#00F5FF" stroke-width="1.5"/>
+    <circle cx="400" cy="74" r="2" fill="#00F5FF"/>
+    <!-- Arms -->
+    <line x1="385" y1="98" x2="372" y2="108" stroke="#00F5FF" stroke-width="2"/>
+    <line x1="415" y1="98" x2="428" y2="108" stroke="#00F5FF" stroke-width="2"/>
+    <!-- Legs -->
+    <line x1="392" y1="126" x2="388" y2="145" stroke="#00F5FF" stroke-width="2"/>
+    <line x1="408" y1="126" x2="412" y2="145" stroke="#00F5FF" stroke-width="2"/>
+    <!-- Feet -->
+    <line x1="385" y1="145" x2="392" y2="145" stroke="#00F5FF" stroke-width="2"/>
+    <line x1="410" y1="145" x2="417" y2="145" stroke="#00F5FF" stroke-width="2"/>
+  </g>
+
+  <!-- Wing Agent Left 1 - GREEN #2BFF88, 40px tall -->
+  <!-- Position: 310, 145 -->
+  <g filter="url(#neon-glow)">
+    <!-- Motion trail -->
+    <line x1="310" y1="118" x2="316" y2="106" stroke="#2BFF88" stroke-width="2" opacity="0.6"/>
+    <line x1="310" y1="118" x2="320" y2="101" stroke="#2BFF88" stroke-width="1.4" opacity="0.35"/>
+    <line x1="310" y1="118" x2="324" y2="95" stroke="#2BFF88" stroke-width="0.8" opacity="0.15"/>
+
+    <!-- Body -->
+    <rect x="297" y="120" width="26" height="30" rx="2" fill="#001A10" stroke="#2BFF88" stroke-width="1.2"/>
+    <!-- Screen face -->
+    <rect x="302" y="125" width="16" height="11" rx="2" fill="#2BFF88" opacity="0.85"/>
+    <!-- Eyes -->
+    <rect x="304" y="127" width="4" height="3" rx="1" fill="#001A10"/>
+    <rect x="311" y="127" width="4" height="3" rx="1" fill="#001A10"/>
+    <!-- Mouth -->
+    <line x1="304" y1="133" x2="316" y2="133" stroke="#001A10" stroke-width="1.2"/>
+    <!-- Head -->
+    <rect x="299" y="113" width="22" height="9" rx="2" fill="#001A10" stroke="#2BFF88" stroke-width="1"/>
+    <!-- Antenna -->
+    <line x1="310" y1="113" x2="310" y2="107" stroke="#2BFF88" stroke-width="1.2"/>
+    <circle cx="310" cy="106" r="1.8" fill="#2BFF88"/>
+    <!-- Arms -->
+    <line x1="297" y1="128" x2="286" y2="136" stroke="#2BFF88" stroke-width="1.8"/>
+    <line x1="323" y1="128" x2="334" y2="136" stroke="#2BFF88" stroke-width="1.8"/>
+    <!-- Legs -->
+    <line x1="304" y1="150" x2="300" y2="165" stroke="#2BFF88" stroke-width="1.8"/>
+    <line x1="316" y1="150" x2="320" y2="165" stroke="#2BFF88" stroke-width="1.8"/>
+    <!-- Feet -->
+    <line x1="297" y1="165" x2="304" y2="165" stroke="#2BFF88" stroke-width="1.8"/>
+    <line x1="318" y1="165" x2="325" y2="165" stroke="#2BFF88" stroke-width="1.8"/>
+  </g>
+
+  <!-- Wing Agent Right 1 - PINK #FF3CAC, 40px tall -->
+  <!-- Position: 490, 145 -->
+  <g filter="url(#neon-glow)">
+    <!-- Motion trail -->
+    <line x1="490" y1="118" x2="484" y2="106" stroke="#FF3CAC" stroke-width="2" opacity="0.6"/>
+    <line x1="490" y1="118" x2="480" y2="101" stroke="#FF3CAC" stroke-width="1.4" opacity="0.35"/>
+    <line x1="490" y1="118" x2="476" y2="95" stroke="#FF3CAC" stroke-width="0.8" opacity="0.15"/>
+
+    <!-- Body -->
+    <rect x="477" y="120" width="26" height="30" rx="2" fill="#1A001A" stroke="#FF3CAC" stroke-width="1.2"/>
+    <!-- Screen face -->
+    <rect x="482" y="125" width="16" height="11" rx="2" fill="#FF3CAC" opacity="0.85"/>
+    <!-- Eyes -->
+    <rect x="484" y="127" width="4" height="3" rx="1" fill="#1A001A"/>
+    <rect x="491" y="127" width="4" height="3" rx="1" fill="#1A001A"/>
+    <!-- Mouth -->
+    <line x1="484" y1="133" x2="496" y2="133" stroke="#1A001A" stroke-width="1.2"/>
+    <!-- Head -->
+    <rect x="479" y="113" width="22" height="9" rx="2" fill="#1A001A" stroke="#FF3CAC" stroke-width="1"/>
+    <!-- Antenna -->
+    <line x1="490" y1="113" x2="490" y2="107" stroke="#FF3CAC" stroke-width="1.2"/>
+    <circle cx="490" cy="106" r="1.8" fill="#FF3CAC"/>
+    <!-- Arms -->
+    <line x1="477" y1="128" x2="466" y2="136" stroke="#FF3CAC" stroke-width="1.8"/>
+    <line x1="503" y1="128" x2="514" y2="136" stroke="#FF3CAC" stroke-width="1.8"/>
+    <!-- Legs -->
+    <line x1="484" y1="150" x2="480" y2="165" stroke="#FF3CAC" stroke-width="1.8"/>
+    <line x1="496" y1="150" x2="500" y2="165" stroke="#FF3CAC" stroke-width="1.8"/>
+    <!-- Feet -->
+    <line x1="477" y1="165" x2="484" y2="165" stroke="#FF3CAC" stroke-width="1.8"/>
+    <line x1="498" y1="165" x2="505" y2="165" stroke="#FF3CAC" stroke-width="1.8"/>
+  </g>
+
+  <!-- Wing Agent Left 2 - PINK #FF3CAC, 40px tall -->
+  <!-- Position: 225, 175 -->
+  <g filter="url(#neon-glow)">
+    <!-- Motion trail -->
+    <line x1="225" y1="148" x2="233" y2="135" stroke="#FF3CAC" stroke-width="2" opacity="0.6"/>
+    <line x1="225" y1="148" x2="239" y2="128" stroke="#FF3CAC" stroke-width="1.4" opacity="0.35"/>
+    <line x1="225" y1="148" x2="245" y2="121" stroke="#FF3CAC" stroke-width="0.8" opacity="0.15"/>
+
+    <!-- Body -->
+    <rect x="212" y="150" width="26" height="30" rx="2" fill="#1A001A" stroke="#FF3CAC" stroke-width="1.2"/>
+    <!-- Screen face -->
+    <rect x="217" y="155" width="16" height="11" rx="2" fill="#FF3CAC" opacity="0.85"/>
+    <!-- Eyes -->
+    <rect x="219" y="157" width="4" height="3" rx="1" fill="#1A001A"/>
+    <rect x="226" y="157" width="4" height="3" rx="1" fill="#1A001A"/>
+    <!-- Mouth -->
+    <line x1="219" y1="163" x2="231" y2="163" stroke="#1A001A" stroke-width="1.2"/>
+    <!-- Head -->
+    <rect x="214" y="143" width="22" height="9" rx="2" fill="#1A001A" stroke="#FF3CAC" stroke-width="1"/>
+    <!-- Antenna -->
+    <line x1="225" y1="143" x2="225" y2="137" stroke="#FF3CAC" stroke-width="1.2"/>
+    <circle cx="225" cy="136" r="1.8" fill="#FF3CAC"/>
+    <!-- Arms -->
+    <line x1="212" y1="158" x2="201" y2="166" stroke="#FF3CAC" stroke-width="1.8"/>
+    <line x1="238" y1="158" x2="249" y2="166" stroke="#FF3CAC" stroke-width="1.8"/>
+    <!-- Legs -->
+    <line x1="219" y1="180" x2="215" y2="195" stroke="#FF3CAC" stroke-width="1.8"/>
+    <line x1="231" y1="180" x2="235" y2="195" stroke="#FF3CAC" stroke-width="1.8"/>
+    <!-- Feet -->
+    <line x1="212" y1="195" x2="219" y2="195" stroke="#FF3CAC" stroke-width="1.8"/>
+    <line x1="233" y1="195" x2="240" y2="195" stroke="#FF3CAC" stroke-width="1.8"/>
+  </g>
+
+  <!-- Wing Agent Right 2 - GREEN #2BFF88, 40px tall -->
+  <!-- Position: 575, 175 -->
+  <g filter="url(#neon-glow)">
+    <!-- Motion trail -->
+    <line x1="575" y1="148" x2="567" y2="135" stroke="#2BFF88" stroke-width="2" opacity="0.6"/>
+    <line x1="575" y1="148" x2="561" y2="128" stroke="#2BFF88" stroke-width="1.4" opacity="0.35"/>
+    <line x1="575" y1="148" x2="555" y2="121" stroke="#2BFF88" stroke-width="0.8" opacity="0.15"/>
+
+    <!-- Body -->
+    <rect x="562" y="150" width="26" height="30" rx="2" fill="#001A10" stroke="#2BFF88" stroke-width="1.2"/>
+    <!-- Screen face -->
+    <rect x="567" y="155" width="16" height="11" rx="2" fill="#2BFF88" opacity="0.85"/>
+    <!-- Eyes -->
+    <rect x="569" y="157" width="4" height="3" rx="1" fill="#001A10"/>
+    <rect x="576" y="157" width="4" height="3" rx="1" fill="#001A10"/>
+    <!-- Mouth -->
+    <line x1="569" y1="163" x2="581" y2="163" stroke="#001A10" stroke-width="1.2"/>
+    <!-- Head -->
+    <rect x="564" y="143" width="22" height="9" rx="2" fill="#001A10" stroke="#2BFF88" stroke-width="1"/>
+    <!-- Antenna -->
+    <line x1="575" y1="143" x2="575" y2="137" stroke="#2BFF88" stroke-width="1.2"/>
+    <circle cx="575" cy="136" r="1.8" fill="#2BFF88"/>
+    <!-- Arms -->
+    <line x1="562" y1="158" x2="551" y2="166" stroke="#2BFF88" stroke-width="1.8"/>
+    <line x1="588" y1="158" x2="599" y2="166" stroke="#2BFF88" stroke-width="1.8"/>
+    <!-- Legs -->
+    <line x1="569" y1="180" x2="565" y2="195" stroke="#2BFF88" stroke-width="1.8"/>
+    <line x1="581" y1="180" x2="585" y2="195" stroke="#2BFF88" stroke-width="1.8"/>
+    <!-- Feet -->
+    <line x1="562" y1="195" x2="569" y2="195" stroke="#2BFF88" stroke-width="1.8"/>
+    <line x1="583" y1="195" x2="590" y2="195" stroke="#2BFF88" stroke-width="1.8"/>
+  </g>
+
+  <!-- Rear Agent (center-back) - YELLOW #FFDD00, 40px tall -->
+  <!-- Position: 400, 205 -->
+  <g filter="url(#neon-glow)">
+    <!-- Motion trail -->
+    <line x1="400" y1="178" x2="400" y2="165" stroke="#FFDD00" stroke-width="2" opacity="0.6"/>
+    <line x1="400" y1="178" x2="400" y2="158" stroke="#FFDD00" stroke-width="1.4" opacity="0.35"/>
+    <line x1="400" y1="178" x2="400" y2="150" stroke="#FFDD00" stroke-width="0.8" opacity="0.15"/>
+
+    <!-- Body -->
+    <rect x="387" y="180" width="26" height="30" rx="2" fill="#1A1400" stroke="#FFDD00" stroke-width="1.2"/>
+    <!-- Screen face -->
+    <rect x="392" y="185" width="16" height="11" rx="2" fill="#FFDD00" opacity="0.85"/>
+    <!-- Eyes -->
+    <rect x="394" y="187" width="4" height="3" rx="1" fill="#1A1400"/>
+    <rect x="401" y="187" width="4" height="3" rx="1" fill="#1A1400"/>
+    <!-- Mouth -->
+    <line x1="394" y1="193" x2="406" y2="193" stroke="#1A1400" stroke-width="1.2"/>
+    <!-- Head -->
+    <rect x="389" y="173" width="22" height="9" rx="2" fill="#1A1400" stroke="#FFDD00" stroke-width="1"/>
+    <!-- Antenna -->
+    <line x1="400" y1="173" x2="400" y2="167" stroke="#FFDD00" stroke-width="1.2"/>
+    <circle cx="400" cy="166" r="1.8" fill="#FFDD00"/>
+    <!-- Arms -->
+    <line x1="387" y1="188" x2="376" y2="196" stroke="#FFDD00" stroke-width="1.8"/>
+    <line x1="413" y1="188" x2="424" y2="196" stroke="#FFDD00" stroke-width="1.8"/>
+    <!-- Legs -->
+    <line x1="394" y1="210" x2="390" y2="225" stroke="#FFDD00" stroke-width="1.8"/>
+    <line x1="406" y1="210" x2="410" y2="225" stroke="#FFDD00" stroke-width="1.8"/>
+    <!-- Feet -->
+    <line x1="387" y1="225" x2="394" y2="225" stroke="#FFDD00" stroke-width="1.8"/>
+    <line x1="408" y1="225" x2="415" y2="225" stroke="#FFDD00" stroke-width="1.8"/>
+  </g>
+
+  <!-- ==================== TEXT ==================== -->
+  <!-- Main title: AGENTSPAWN -->
+  <text
+    x="400"
+    y="290"
+    text-anchor="middle"
+    font-family="'Courier New', Courier, monospace"
+    font-size="52"
+    font-weight="bold"
+    letter-spacing="8"
+    fill="#00F5FF"
+    filter="url(#text-glow)"
+  >AGENTSPAWN</text>
+
+  <!-- Subtitle: MANAGE · SPAWN · COMMAND -->
+  <text
+    x="400"
+    y="330"
+    text-anchor="middle"
+    font-family="'Courier New', Courier, monospace"
+    font-size="16"
+    letter-spacing="4"
+    fill="#FFDD00"
+    filter="url(#text-glow)"
+  >MANAGE · SPAWN · COMMAND</text>
+
+  <!-- Decorative horizontal rule below subtitle -->
+  <line x1="200" y1="350" x2="600" y2="350" stroke="#00F5FF" stroke-width="0.8" opacity="0.3"/>
+  <line x1="240" y1="354" x2="560" y2="354" stroke="#2BFF88" stroke-width="0.5" opacity="0.2"/>
+</svg>
