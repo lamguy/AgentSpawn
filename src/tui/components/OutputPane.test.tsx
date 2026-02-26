@@ -12,8 +12,8 @@ describe('OutputPane', () => {
       <OutputPane session={null} outputLines={[]} />,
     );
 
-    expect(lastFrame()).toContain('SELECT A PLAYER TO VIEW GAME FEED');
-    expect(lastFrame()).toContain('or press n to INSERT COIN');
+    expect(lastFrame()).toContain('SELECT A SESSION TO VIEW OUTPUT');
+    expect(lastFrame()).toContain('or press n to spawn a new session');
   });
 
   it('renders session header with name and status', () => {
@@ -30,9 +30,9 @@ describe('OutputPane', () => {
       <OutputPane session={mockSession} outputLines={[]} />,
     );
 
-    expect(lastFrame()).toContain('GAME FEED:');
+    expect(lastFrame()).toContain('OUTPUT:');
     expect(lastFrame()).toContain('test-session');
-    expect(lastFrame()).toContain('IN PLAY');
+    expect(lastFrame()).toContain('RUNNING');
   });
 
   it('shows status symbol for running sessions', () => {
@@ -67,7 +67,7 @@ describe('OutputPane', () => {
       <OutputPane session={mockSession} outputLines={[]} />,
     );
 
-    expect(lastFrame()).toContain('GAME OVER');
+    expect(lastFrame()).toContain('OFFLINE');
     // Stopped uses arcade [-] symbol
     expect(lastFrame()).toContain('[-]');
   });
@@ -122,7 +122,7 @@ describe('OutputPane', () => {
     );
 
     expect(lastFrame()).toContain('NO OUTPUT YET');
-    expect(lastFrame()).toContain('Press Enter to attach and send moves');
+    expect(lastFrame()).toContain('Press Enter to attach and send prompts');
   });
 
   it('renders output lines with content', () => {

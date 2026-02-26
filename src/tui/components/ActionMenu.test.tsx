@@ -14,19 +14,19 @@ describe('ActionMenu', () => {
 
   it('should render the title', () => {
     const { lastFrame } = render(<ActionMenu {...defaults} />);
-    expect(lastFrame()).toContain('COMMAND CENTER');
+    expect(lastFrame()).toContain('ACTIONS');
   });
 
   it('should render all 7 menu items', () => {
     const { lastFrame } = render(<ActionMenu {...defaults} />);
     const output = lastFrame() || '';
-    expect(output).toContain('INSERT COIN');
-    expect(output).toContain('PRESS START');
-    expect(output).toContain('PULL PLUG');
-    expect(output).toContain('CONTINUE?');
-    expect(output).toContain('GAME RESET');
-    expect(output).toContain('HOW TO PLAY');
-    expect(output).toContain('POWER OFF');
+    expect(output).toContain('NEW SESSION');
+    expect(output).toContain('ATTACH');
+    expect(output).toContain('TERMINATE');
+    expect(output).toContain('RESTART');
+    expect(output).toContain('STOP ALL');
+    expect(output).toContain('HELP');
+    expect(output).toContain('QUIT');
   });
 
   it('should highlight the selected item with cursor', () => {

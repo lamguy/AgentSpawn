@@ -32,14 +32,14 @@ export function SessionListPane({
     return (
       <Box flexDirection="column" paddingX={1}>
         <Text bold color={ARCADE_COLORS.neonCyan}>
-          {ARCADE_DECOR.sectionTitle('SELECT PLAYER')}
+          {ARCADE_DECOR.sectionTitle('SESSIONS')}
         </Text>
         <Text color={ARCADE_COLORS.phosphorGray}>{ARCADE_DECOR.scanline}</Text>
         <Box marginTop={1} flexDirection="column" alignItems="center">
           <BlinkText color={ARCADE_COLORS.acidYellow} bold intervalMs={ARCADE_BLINK.insertCoin}>
-            INSERT COIN TO BEGIN
+            PRESS [N] TO SPAWN
           </BlinkText>
-          <Text color={ARCADE_COLORS.phosphorGray}>Press n to spawn a player</Text>
+          <Text color={ARCADE_COLORS.phosphorGray}>Press n to spawn a session</Text>
         </Box>
       </Box>
     );
@@ -56,7 +56,7 @@ export function SessionListPane({
       {/* Pane title */}
       <Box flexDirection="row" justifyContent="space-between">
         <Text bold color={ARCADE_COLORS.neonCyan}>
-          {ARCADE_DECOR.sectionTitle('SELECT PLAYER')}
+          {ARCADE_DECOR.sectionTitle('SESSIONS')}
         </Text>
         <Text color={ARCADE_COLORS.arcadeOrange}>{allSessions.length}</Text>
       </Box>
@@ -69,7 +69,7 @@ export function SessionListPane({
 
         {visibleSessions.map((session, listIndex) => {
           const globalIndex = scrollOffset + listIndex;
-          const playerNum = `P${globalIndex + 1}`;
+          const playerNum = `#${globalIndex + 1}`;
           const isSelected = session.name === selectedSessionName;
           const isAttached = session.name === attachedSessionName;
           const isRemote = Boolean(session.remoteAlias);
@@ -125,15 +125,15 @@ export function SessionListPane({
 
                   {session.state === SessionState.Running && session.pid > 0 && (
                     <Text color={ARCADE_COLORS.phosphorGray}>
-                      <Text color={ARCADE_COLORS.acidYellow}>CHIP# </Text>
+                      <Text color={ARCADE_COLORS.acidYellow}>PID </Text>
                       {session.pid}{'  '}
-                      <Text color={ARCADE_COLORS.acidYellow}>PLAY TIME </Text>
+                      <Text color={ARCADE_COLORS.acidYellow}>UPTIME </Text>
                       {formatUptime(session.startedAt)}
                     </Text>
                   )}
 
                   <Text color={ARCADE_COLORS.phosphorGray}>
-                    <Text color={ARCADE_COLORS.acidYellow}>MOVES: </Text>
+                    <Text color={ARCADE_COLORS.acidYellow}>PROMPTS: </Text>
                     {session.promptCount ?? 0}
                   </Text>
 
@@ -144,7 +144,7 @@ export function SessionListPane({
                   )}
 
                   {isAttached && (
-                    <Text bold color={ARCADE_COLORS.hotPink}>[IN GAME]</Text>
+                    <Text bold color={ARCADE_COLORS.hotPink}>[ONLINE]</Text>
                   )}
 
                   <Text bold color={statusCfg.color}>

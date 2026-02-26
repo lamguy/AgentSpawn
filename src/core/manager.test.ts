@@ -14,6 +14,21 @@ vi.mock('node:child_process', () => ({
   execFile: vi.fn(),
 }));
 
+vi.mock('./sandbox.js', () => {
+  return {
+    SandboxManager: class MockSandboxManager {
+      static async detectBackend() { return 'sandbox-exec' as const; }
+      static async detectPlatformNativeBackend() { return 'sandbox-exec' as const; }
+      async start() { /* no-op */ }
+      async stop() { /* no-op */ }
+      getBackend() { return 'sandbox-exec' as const; }
+      getLevel() { return 'permissive' as const; }
+      buildSpawnArgs(args: string[]) { return { cmd: 'claude', args }; }
+      buildArbitrarySpawnArgs(executable: string, args: string[]) { return { cmd: executable, args }; }
+    },
+  };
+});
+
 const mockedSpawn = vi.mocked(childProcess.spawn);
 
 interface MockChildProcess extends EventEmitter {

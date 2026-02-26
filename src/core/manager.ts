@@ -85,45 +85,42 @@ export class SessionManager extends EventEmitter {
       throw new SessionAlreadyExistsError(config.name);
     }
 
-    let sandbox: SandboxManager | undefined;
-    if (config.sandboxed) {
-      const sandboxOptions: SandboxOptions = {
-        level: config.sandboxLevel,
-        image: config.sandboxImage,
-        memoryLimit: config.sandboxMemoryLimit,
-        cpuLimit: config.sandboxCpuLimit,
-      };
+    const sandboxOptions: SandboxOptions = {
+      level: config.sandboxLevel,
+      image: config.sandboxImage,
+      memoryLimit: config.sandboxMemoryLimit,
+      cpuLimit: config.sandboxCpuLimit,
+    };
 
-      let backend = config.sandboxBackend ?? await SandboxManager.detectBackend();
-      if (!backend) throw new SandboxNotAvailableError();
+    let backend = config.sandboxBackend ?? await SandboxManager.detectBackend();
+    if (!backend) throw new SandboxNotAvailableError();
 
-      sandbox = new SandboxManager(config.name, config.workingDirectory, backend, sandboxOptions);
-      try {
-        await sandbox.start();
-      } catch (e) {
-        if (backend === 'docker') {
-          // Docker failed — try platform-native backend as fallback
-          const fallback = await SandboxManager.detectPlatformNativeBackend();
-          if (fallback) {
-            logger.warn(
-              `Docker sandbox failed for session "${config.name}", falling back to ${fallback}: ${(e as Error).message}`,
-            );
-            backend = fallback;
-            sandbox = new SandboxManager(config.name, config.workingDirectory, fallback, sandboxOptions);
-            try {
-              await sandbox.start();
-            } catch (e2) {
-              throw new SandboxStartError(config.name, (e2 as Error).message);
-            }
-          } else {
-            throw new SandboxStartError(config.name, (e as Error).message);
+    let sandbox = new SandboxManager(config.name, config.workingDirectory, backend, sandboxOptions);
+    try {
+      await sandbox.start();
+    } catch (e) {
+      if (backend === 'docker') {
+        // Docker failed — try platform-native backend as fallback
+        const fallback = await SandboxManager.detectPlatformNativeBackend();
+        if (fallback) {
+          logger.warn(
+            `Docker sandbox failed for session "${config.name}", falling back to ${fallback}: ${(e as Error).message}`,
+          );
+          backend = fallback;
+          sandbox = new SandboxManager(config.name, config.workingDirectory, fallback, sandboxOptions);
+          try {
+            await sandbox.start();
+          } catch (e2) {
+            throw new SandboxStartError(config.name, (e2 as Error).message);
           }
         } else {
           throw new SandboxStartError(config.name, (e as Error).message);
         }
+      } else {
+        throw new SandboxStartError(config.name, (e as Error).message);
       }
-      config = { ...config, sandboxBackend: backend };
     }
+    config = { ...config, sandboxBackend: backend };
     const session = new Session(config, this.options?.shutdownTimeoutMs, claudeSessionId, promptCount, retryCount, sandbox);
     await session.start();
     logger.info(`Session "${config.name}" started in ${config.workingDirectory}`);
@@ -141,7 +138,6 @@ export class SessionManager extends EventEmitter {
       permissionMode: config.permissionMode,
       restartPolicy: session.getRestartPolicy(),
       tags: config.tags,
-      sandboxed: config.sandboxed,
       sandboxBackend: config.sandboxBackend,
       sandboxLevel: config.sandboxLevel,
       sandboxImage: config.sandboxImage,
@@ -273,7 +269,6 @@ export class SessionManager extends EventEmitter {
       workingDirectory: entry.workingDirectory,
       permissionMode: entry.permissionMode,
       tags: entry.tags,
-      sandboxed: entry.sandboxed,
       sandboxBackend: entry.sandboxBackend,
       sandboxLevel: entry.sandboxLevel,
       sandboxImage: entry.sandboxImage,
@@ -332,7 +327,6 @@ export class SessionManager extends EventEmitter {
         promptCount: 0,
         permissionMode: entry.permissionMode,
         tags: entry.tags,
-        sandboxed: entry.sandboxed,
         sandboxBackend: entry.sandboxBackend,
         sandboxLevel: entry.sandboxLevel,
       };
@@ -437,7 +431,6 @@ export class SessionManager extends EventEmitter {
           promptCount: 0,
           permissionMode: entry.permissionMode,
           tags: entry.tags,
-          sandboxed: entry.sandboxed,
           sandboxBackend: entry.sandboxBackend,
           sandboxLevel: entry.sandboxLevel,
         });

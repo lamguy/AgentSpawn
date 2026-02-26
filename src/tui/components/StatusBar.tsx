@@ -81,24 +81,24 @@ function getShortcuts(
       { key: 'Tab', action: 'next' },
       { key: 'Enter', action: 'assign' },
       { key: '[/]', action: 'switch' },
-      { key: 'v', action: 'exit VERSUS' },
-      { key: '?', action: 'HOW TO PLAY' },
+      { key: 'v', action: 'exit SPLIT' },
+      { key: '?', action: 'HELP' },
     ];
   }
 
   switch (mode) {
     case 'attached':
       return [
-        { key: 'Esc', action: 'PAUSE' },
+        { key: 'Esc', action: 'DETACH' },
         { key: 'Ctrl+C', action: 'clear' },
       ];
     case 'navigation':
     default:
       return [
         { key: 'Tab', action: 'next' },
-        { key: 'Enter', action: 'START' },
-        { key: 'n', action: 'COIN' },
-        { key: '?', action: 'HOW' },
+        { key: 'Enter', action: 'ATTACH' },
+        { key: 'n', action: 'NEW' },
+        { key: '?', action: 'HELP' },
         { key: ':', action: 'CMD' },
       ];
   }
@@ -137,9 +137,9 @@ export function StatusBar({ state, version }: StatusBarProps): React.ReactElemen
       ? state.statusMessage
       : null;
 
-  const playerCountStr = `PLAYERS:${String(sessionCount).padStart(2, '0')}`;
+  const playerCountStr = `SESSIONS:${String(sessionCount).padStart(2, '0')}`;
   const totalPrompts = state.sessions.reduce((sum, s) => sum + (s.promptCount ?? 0), 0);
-  const scoreStr = `SCORE:${String(totalPrompts).padStart(6, '0')}`;
+  const scoreStr = `PROMPTS:${String(totalPrompts).padStart(6, '0')}`;
 
   const remoteErrors = state.remoteErrors ?? [];
 

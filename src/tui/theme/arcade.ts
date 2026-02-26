@@ -19,31 +19,31 @@ export const ARCADE_COLORS = {
 
 // ── Status config ───────────────────────────────────────────────────
 export const ARCADE_STATUS = {
-  running: { symbol: '[+]', color: ARCADE_COLORS.neonGreen,   label: 'IN PLAY' },
-  stopped: { symbol: '[-]', color: ARCADE_COLORS.phosphorGray, label: 'GAME OVER' },
-  crashed: { symbol: '[X]', color: ARCADE_COLORS.laserRed,    label: 'DESTROYED' },
+  running: { symbol: '[+]', color: ARCADE_COLORS.neonGreen,   label: 'RUNNING' },
+  stopped: { symbol: '[-]', color: ARCADE_COLORS.phosphorGray, label: 'OFFLINE' },
+  crashed: { symbol: '[X]', color: ARCADE_COLORS.laserRed,    label: 'CRASHED' },
 } as const;
 
 // ── Mode badges ─────────────────────────────────────────────────────
 export const ARCADE_MODES = {
-  navigation:      { label: '[SELECT PLAYER]', bg: undefined,                       fg: ARCADE_COLORS.neonCyan },
-  attached:        { label: '[IN GAME]',        bg: ARCADE_COLORS.hotPink,          fg: '#000000' },
-  split:           { label: '[VERSUS MODE]',    bg: ARCADE_COLORS.electricPurple,   fg: '#000000' },
-  help:            { label: '[HOW TO PLAY]',    bg: ARCADE_COLORS.acidYellow,       fg: '#000000' },
-  actionMenu:      { label: '[COMMAND CENTER]', bg: ARCADE_COLORS.neonCyan,         fg: '#000000' },
-  sessionCreation: { label: '[INSERT COIN]',    bg: ARCADE_COLORS.acidYellow,       fg: '#000000' },
-  confirmation:    { label: '[CONTINUE?]',      bg: ARCADE_COLORS.laserRed,         fg: '#000000' },
+  navigation:      { label: '[SESSIONS]',    bg: undefined,                       fg: ARCADE_COLORS.neonCyan },
+  attached:        { label: '[ONLINE]',      bg: ARCADE_COLORS.hotPink,           fg: '#000000' },
+  split:           { label: '[SPLIT VIEW]',  bg: ARCADE_COLORS.electricPurple,    fg: '#000000' },
+  help:            { label: '[HELP]',        bg: ARCADE_COLORS.acidYellow,        fg: '#000000' },
+  actionMenu:      { label: '[ACTIONS]',     bg: ARCADE_COLORS.neonCyan,          fg: '#000000' },
+  sessionCreation: { label: '[NEW SESSION]', bg: ARCADE_COLORS.acidYellow,        fg: '#000000' },
+  confirmation:    { label: '[CONFIRM]',     bg: ARCADE_COLORS.laserRed,          fg: '#000000' },
 } as const;
 
 // ── Action menu label overrides ──────────────────────────────────────
 export const ARCADE_MENU_LABELS: Record<string, string> = {
-  'new-session':     'INSERT COIN',
-  'attach':          'PRESS START',
-  'stop-session':    'PULL PLUG',
-  'restart-session': 'CONTINUE?',
-  'stop-all':        'GAME RESET',
-  'help':            'HOW TO PLAY',
-  'quit':            'POWER OFF',
+  'new-session':     'NEW SESSION',
+  'attach':          'ATTACH',
+  'stop-session':    'TERMINATE',
+  'restart-session': 'RESTART',
+  'stop-all':        'STOP ALL',
+  'help':            'HELP',
+  'quit':            'QUIT',
 };
 
 // ── Decorative helpers ───────────────────────────────────────────────
@@ -75,28 +75,28 @@ export const ARCADE_HEADER_COMPACT: readonly string[] = [
 
 // ── Terminology map ──────────────────────────────────────────────────
 export const ARCADE_TERMS = {
-  sessions:   'PLAYERS',
-  navigation: 'SELECT PLAYER',
-  attached:   'IN GAME',
-  running:    'IN PLAY',
-  stopped:    'GAME OVER',
-  crashed:    'DESTROYED',
-  newSession: 'INSERT COIN',
-  stopSession: 'PULL PLUG',
-  stopAll:    'GAME RESET',
-  restart:    'CONTINUE?',
-  attach:     'PRESS START',
-  detach:     'PAUSE GAME',
-  help:       'HOW TO PLAY',
-  actions:    'COMMAND CENTER',
-  quit:       'POWER OFF',
-  prompts:    'MOVES',
-  pid:        'CHIP#',
-  uptime:     'PLAY TIME',
-  output:     'GAME FEED',
-  directory:  'ARENA',
-  creating:   'LOADING PLAYER...',
-  thinking:   'PROCESSING MOVE...',
-  noSessions: 'NO PLAYERS DETECTED',
-  insertCoin: 'INSERT COIN TO BEGIN',
+  sessions:   'SESSIONS',
+  navigation: 'SESSION LIST',
+  attached:   'ONLINE',
+  running:    'RUNNING',
+  stopped:    'OFFLINE',
+  crashed:    'CRASHED',
+  newSession: 'NEW SESSION',
+  stopSession: 'TERMINATE',
+  stopAll:    'STOP ALL',
+  restart:    'RESTART?',
+  attach:     'ATTACH',
+  detach:     'DETACH',
+  help:       'HELP',
+  actions:    'ACTIONS',
+  quit:       'QUIT',
+  prompts:    'PROMPTS',
+  pid:        'PID',
+  uptime:     'UPTIME',
+  output:     'OUTPUT',
+  directory:  'DIR',
+  creating:   'SPAWNING...',
+  thinking:   'PROCESSING...',
+  noSessions: 'NO SESSIONS',
+  insertCoin: 'READY :: PRESS [N] TO SPAWN',
 } as const;

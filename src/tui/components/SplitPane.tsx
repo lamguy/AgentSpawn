@@ -43,8 +43,8 @@ export function SplitOutputPane({
           </Text>
         </Box>
         <Text color={ARCADE_COLORS.phosphorGray}>{ARCADE_DECOR.scanline}</Text>
-        <Text color={ARCADE_COLORS.phosphorGray}>NO PLAYER ASSIGNED</Text>
-        <Text color={ARCADE_COLORS.phosphorGray}>PRESS START TO ASSIGN</Text>
+        <Text color={ARCADE_COLORS.phosphorGray}>NO SESSION ASSIGNED</Text>
+        <Text color={ARCADE_COLORS.phosphorGray}>PRESS ENTER TO ASSIGN</Text>
       </Box>
     );
   }
@@ -127,13 +127,13 @@ export function SplitPane({
         session={leftSession}
         lines={leftLines}
         isActive={activePaneIndex === 0}
-        paneLabel="P1:"
+        paneLabel="[A]"
       />
       <SplitOutputPane
         session={rightSession}
         lines={rightLines}
         isActive={activePaneIndex === 1}
-        paneLabel="P2:"
+        paneLabel="[B]"
       />
     </Box>
   );

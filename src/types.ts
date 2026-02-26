@@ -3,7 +3,7 @@ import type { Writable, Readable } from 'node:stream';
 import type { HistoryStore } from './core/history.js';
 import type { ExitClassification } from './core/restart-policy.js';
 
-export type SandboxBackend = 'docker' | 'bwrap' | 'sandbox-exec';
+export type SandboxBackend = 'docker' | 'podman' | 'bwrap' | 'sandbox-exec';
 
 /**
  * Isolation level for sandboxed sessions.
@@ -54,7 +54,6 @@ export interface SessionConfig {
   promptTimeoutMs?: number;
   restartPolicy?: RestartPolicy;
   tags?: string[];
-  sandboxed?: boolean;
   sandboxBackend?: SandboxBackend;
   sandboxLevel?: SandboxLevel;
   sandboxImage?: string;
@@ -151,7 +150,6 @@ export interface TemplateEntry {
   env?: Record<string, string>;
   restartPolicy?: RestartPolicy;
   createdAt: string;
-  sandboxed?: boolean;
   sandboxLevel?: SandboxLevel;
   sandboxImage?: string;
 }

@@ -107,24 +107,24 @@ export function SessionCreationDialog({
         {/* Title */}
         <Box marginBottom={1}>
           <Text bold color={ARCADE_COLORS.acidYellow}>
-            {ARCADE_DECOR.sectionTitle('INSERT COIN')}
+            {ARCADE_DECOR.sectionTitle('NEW SESSION')}
           </Text>
         </Box>
 
         {isSubmitting ? (
           <Box>
             <BlinkText color={ARCADE_COLORS.acidYellow} bold intervalMs={ARCADE_BLINK.processing}>
-              LOADING PLAYER...
+              SPAWNING...
             </BlinkText>
           </Box>
         ) : (
           <Box flexDirection="column">
-            {renderField('PLAYER NAME', 'name', 'session-name')}
+            {renderField('NAME', 'name', 'session-name')}
             <Box marginTop={1}>
               {renderField('TEMPLATE (OPTIONAL)', 'template', 'template-name')}
             </Box>
             <Box marginTop={1}>
-              {renderField('ARENA', 'directory', './path/to/project')}
+              {renderField('DIR', 'directory', './path/to/project')}
             </Box>
             <Box marginTop={1}>
               {renderField('PERMISSION MODE', 'permissionMode', 'bypassPermissions')}

@@ -27,16 +27,14 @@ describe('StatusBar', () => {
     const state = makeState();
     const { lastFrame } = render(<StatusBar state={state} />, RENDER_OPTS);
     const output = lastFrame() || '';
-    // [SELECT PLAYER] badge — ink may wrap at the space, so check each word
-    expect(output).toContain('SELECT');
-    expect(output).toContain('PLAYER');
+    expect(output).toContain('SESSIONS');
   });
 
   it('should render ATTACHED badge in attached mode', () => {
     const state = makeState({ mode: 'attached', attachedSessionName: 'demo' });
     const { lastFrame } = render(<StatusBar state={state} />, RENDER_OPTS);
     const output = lastFrame() || '';
-    expect(output).toContain('IN GAME');
+    expect(output).toContain('ONLINE');
   });
 
   it('should render HELP badge when help overlay is active', () => {
@@ -45,7 +43,7 @@ describe('StatusBar', () => {
     });
     const { lastFrame } = render(<StatusBar state={state} />, RENDER_OPTS);
     const output = lastFrame() || '';
-    expect(output).toContain('HOW TO PLAY');
+    expect(output).toContain('HELP');
   });
 
   it('should render MENU badge when action menu overlay is active', () => {
@@ -54,7 +52,7 @@ describe('StatusBar', () => {
     });
     const { lastFrame } = render(<StatusBar state={state} />, RENDER_OPTS);
     const output = lastFrame() || '';
-    expect(output).toContain('COMMAND CENTER');
+    expect(output).toContain('ACTIONS');
   });
 
   it('should render NEW SESSION badge when session creation overlay is active', () => {
@@ -69,7 +67,7 @@ describe('StatusBar', () => {
     });
     const { lastFrame } = render(<StatusBar state={state} />, RENDER_OPTS);
     const output = lastFrame() || '';
-    expect(output).toContain('INSERT COIN');
+    expect(output).toContain('NEW SESSION');
   });
 
   it('should render CONFIRM badge when confirmation overlay is active', () => {
@@ -83,16 +81,15 @@ describe('StatusBar', () => {
     });
     const { lastFrame } = render(<StatusBar state={state} />, RENDER_OPTS);
     const output = lastFrame() || '';
-    expect(output).toContain('CONTINUE?');
+    expect(output).toContain('CONFIRM');
   });
 
   it('should render with no sessions', () => {
     const state = makeState();
     const { lastFrame } = render(<StatusBar state={state} />, RENDER_OPTS);
     const output = lastFrame() || '';
-    // PLAYERS counter is present (exact format verified in integration tests)
-    expect(output).toContain('PLAYERS');
-    expect(output).toContain('SCORE');
+    expect(output).toContain('SESSIONS');
+    expect(output).toContain('PROMPTS');
   });
 
   it('should display session count', () => {
@@ -120,8 +117,7 @@ describe('StatusBar', () => {
 
     const { lastFrame } = render(<StatusBar state={state} />, RENDER_OPTS);
     const output = lastFrame() || '';
-    // PLAYERS counter is present (exact session count verified in integration tests)
-    expect(output).toContain('PLAYERS');
+    expect(output).toContain('SESSIONS');
   });
 
   it('should display version when provided', () => {
@@ -138,8 +134,8 @@ describe('StatusBar', () => {
     // Tab key may be truncated by ink at 100-col limit; check action words instead
     expect(output).toContain('next');   // Tab → next
     expect(output).toContain('Enter');
-    expect(output).toContain('START');
-    expect(output).toContain('HOW');
+    expect(output).toContain('ATTACH');
+    expect(output).toContain('HELP');
   });
 
   it('should display attached shortcuts in attached mode', () => {
@@ -147,7 +143,7 @@ describe('StatusBar', () => {
     const { lastFrame } = render(<StatusBar state={state} />, RENDER_OPTS);
     const output = lastFrame() || '';
     expect(output).toContain('Esc');
-    expect(output).toContain('PAUSE');
+    expect(output).toContain('DETACH');
   });
 
   it('should display help overlay shortcuts when help is active', () => {
@@ -218,7 +214,6 @@ describe('StatusBar', () => {
 
     const { lastFrame } = render(<StatusBar state={state} />, RENDER_OPTS);
     const output = lastFrame() || '';
-    // PLAYERS counter is present (exact count verified in integration tests)
-    expect(output).toContain('PLAYERS');
+    expect(output).toContain('SESSIONS');
   });
 });

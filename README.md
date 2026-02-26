@@ -26,10 +26,10 @@ Manage multiple Claude Code instances from a single terminal. Start, stop, switc
   <img src="docs/screenshots/cli-help.gif" alt="agentspawn --help" width="700">
 </p>
 
-### Test Suite (984 tests)
+### Test Suite (1010 tests)
 
 <p align="center">
-  <img src="docs/screenshots/tests.gif" alt="Test suite — 984 tests passing" width="700">
+  <img src="docs/screenshots/tests.gif" alt="Test suite — 1010 tests passing" width="700">
 </p>
 
 ## Install
@@ -186,6 +186,7 @@ Every command supports `--help` for detailed usage.
 - **Prompt timeout** — configurable timeout for hung Claude processes (default 5 min)
 - **Stale PID detection** — validates registry PIDs on startup, marks dead sessions as crashed
 - **Graceful shutdown** — SIGTERM first, SIGKILL after configurable timeout (default 5s)
+- **Mandatory sandbox isolation** — every session runs in sandbox-exec (macOS), bwrap (Linux), Podman, or Docker with three restriction levels; native-first auto-detection, no unsandboxed execution
 - **Real-time output** — streaming response display with timestamps, error highlighting, and memory-bounded buffers
 - **Scriptable** — `--json` flag, proper exit codes (0 success, 1 user error, 2 system error)
 
@@ -320,7 +321,7 @@ node dist/index.js tui # Launch the TUI
 ### Test
 
 ```bash
-npm test               # Run all 984 tests (mocked — no real Claude needed)
+npm test               # Run all 1010 tests (mocked — no real Claude needed)
 ```
 
 ### Lint & Format
@@ -364,6 +365,137 @@ tests/
   integration/      TUI integration tests
 ```
 
+## Session Isolation
+
+Every session runs in a sandbox. Isolation is not optional — AgentSpawn requires a sandbox backend to start any session and will fail with an error if none is available.
+
+### Always-on isolation
+
+Each session gets:
+
+| What's isolated | How |
+|---|---|
+| Conversation context | Unique Claude session UUID (`--session-id` / `--resume`) |
+| Working directory | Separate `cwd` per session (auto-created if needed) |
+| Environment variables | Optional per-session env overrides (from `--env` or template) |
+| Filesystem writes | Sandbox restricts writes to the session's working directory |
+| Process | Separate PID per prompt execution, wrapped by sandbox backend |
+
+### Sandbox backends
+
+AgentSpawn auto-detects the best available backend using a native-first strategy. The platform's built-in sandbox is always preferred over containers:
+
+| Priority | Platform | Backend | What's isolated |
+|---|---|---|---|
+| 1 (macOS) | macOS | sandbox-exec | Filesystem writes: only the session's working directory is writable. Built-in, zero overhead. |
+| 1 (Linux) | Linux | bwrap | Namespace unsharing: filesystem (read-only root, writable workdir), optional network. |
+| 2 | Any | Podman | Full container: filesystem, network, capabilities. Daemonless and rootless by default. |
+| 3 | Any | Docker | Full container: filesystem, network, capabilities. Requires a running daemon. |
+
+Detection stops at the first available backend. On a typical Mac, `sandbox-exec` is found immediately — no container overhead. Override with `--sandbox-backend` to force a specific backend.
+
+> **Note:** `sandbox-exec` is deprecated by Apple as of macOS 26.3 but remains fully functional on all current macOS versions.
+
+```bash
+agentspawn start my-session                                       # Auto-detect (native-first)
+agentspawn start my-session --sandbox-backend podman              # Force Podman
+agentspawn start my-session --sandbox-backend docker              # Force Docker
+```
+
+### Sandbox levels
+
+```bash
+agentspawn start my-session                              # Auto-detect backend, permissive level
+agentspawn start my-session --sandbox-level strict       # Stricter restrictions
+agentspawn start my-session --sandbox-memory 512m        # Resource limits (Podman/Docker)
+```
+
+| Level | Filesystem | Network | Resource limits |
+|---|---|---|---|
+| `permissive` (default) | Write-restricted | Open | None |
+| `standard` | Write-restricted + credential dirs blocked | Open | Optional |
+| `strict` | Maximum restriction | Blocked | Optional |
+
+> **Note:** `strict` blocks network access, which prevents Claude from calling the Anthropic API. Use it only for offline/local-only workloads.
+
+### Prompt execution workflow
+
+```
+User sends prompt
+       │
+       ▼
+  SessionManager
+  (owns all sessions)
+       │
+  ┌────┴────┬──────────────────────┐
+  │         │                      │
+  ▼         ▼                      ▼
+Session A  Session B  ...      Session N
+cwd:~/api  cwd:~/web           cwd:~/db
+uuid: aaa  uuid: bbb           uuid: nnn
+  │         │                      │
+  │   (one child process per prompt invocation, wrapped by sandbox)
+  │         │                      │
+  ▼         ▼                      ▼
+┌─────────────────┐  ┌─────────────────┐
+│  claude --print │  │  claude --print │  ...
+│  --resume aaa   │  │  --resume bbb   │
+│  cwd: ~/api     │  │  cwd: ~/web     │
+│  pid: 1234      │  │  pid: 5678      │
+│  stdio: piped   │  │  stdio: piped   │
+└────────┬────────┘  └────────┬────────┘
+         │                    │
+         └──── stdout ────────┘
+                   │
+                   ▼
+          OutputCapture (EventEmitter)
+                   │
+                   ▼
+             TUI / CLI output
+```
+
+Each spawn is always wrapped by the sandbox backend:
+
+```
+spawn('sandbox-exec', ['-f', profile,
+    'claude', ...args], { cwd, stdio })
+or
+spawn('bwrap', ['--ro-bind','/',...,
+    'claude', ...args], { cwd, stdio })
+or
+spawn('podman', ['exec', containerId,
+    'claude', ...args], { cwd, stdio })
+or
+spawn('docker', ['exec', containerId,
+    'claude', ...args], { cwd, stdio })
+```
+
+### Session Lifecycle
+
+```
+         agentspawn start
+                │
+                ▼
+            STOPPED ──────────────────────────────────────────┐
+                │                                              │
+           startSession()                                      │
+                │                                             stop()
+                ▼                                              │
+            RUNNING ──── sendPrompt() ──> claude --print      │
+                │              │                    │          │
+                │         (output streamed          │          │
+                │          via EventEmitter)        │          │
+                │              └────────────────────┘          │
+                │                                              │
+          (unexpected exit)                                    │
+                │                                              │
+                ▼                                              │
+            CRASHED                                           STOPPED ◄──┘
+
+  PID validated on startup — stale/dead PIDs are auto-marked CRASHED
+  Registry persists to ~/.agentspawn/sessions.json (file-locked)
+```
+
 ## Architecture
 
 Sessions use `claude --print` per prompt instead of persistent child processes. Conversation continuity is maintained via `--session-id` (first prompt) and `--resume` (subsequent prompts) flags. The TUI stays mounted at all times.
@@ -374,17 +506,6 @@ agentspawn start  ──> SessionManager.startSession() ──> Registry.addEntr
 agentspawn stop   ──> SessionManager.stopSession()  ──> Registry.removeEntry()
 agentspawn list   ──> SessionManager.listSessions() ──> in-memory + Registry merge
 agentspawn exec   ──> Session.sendPrompt()          ──> spawn claude --print
-```
-
-### Session Lifecycle
-
-```
-STOPPED ──start()──> RUNNING ──stop()──> STOPPED
-                        │
-                   (unexpected exit)
-                        │
-                        ▼
-                     CRASHED
 ```
 
 ### TUI Modes

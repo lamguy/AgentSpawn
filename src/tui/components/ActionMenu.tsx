@@ -51,7 +51,7 @@ export function ActionMenu({ selectedIndex, onSelect, onNavigate, onDismiss }: A
         {/* Title */}
         <Box marginBottom={1}>
           <Text bold color={ARCADE_COLORS.neonCyan}>
-            {ARCADE_DECOR.sectionTitle('COMMAND CENTER')}
+            {ARCADE_DECOR.sectionTitle('ACTIONS')}
           </Text>
         </Box>
 

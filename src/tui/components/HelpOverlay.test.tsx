@@ -8,7 +8,7 @@ describe('HelpOverlay', () => {
     const { lastFrame } = render(
       <HelpOverlay scrollOffset={0} onScroll={vi.fn()} onDismiss={vi.fn()} />,
     );
-    expect(lastFrame()).toContain('HOW TO PLAY');
+    expect(lastFrame()).toContain('HELP');
   });
 
   it('should render navigation shortcuts section', () => {
@@ -16,11 +16,11 @@ describe('HelpOverlay', () => {
       <HelpOverlay scrollOffset={0} onScroll={vi.fn()} onDismiss={vi.fn()} />,
     );
     const output = lastFrame() || '';
-    expect(output).toContain('SELECT PLAYER MODE');
+    expect(output).toContain('SESSION LIST MODE');
     expect(output).toContain('Tab');
-    expect(output).toContain('Next player');
+    expect(output).toContain('Next session');
     expect(output).toContain('Enter');
-    expect(output).toContain('PRESS START');
+    expect(output).toContain('ATTACH');
   });
 
   it('should render attached mode shortcuts section', () => {
@@ -28,9 +28,9 @@ describe('HelpOverlay', () => {
       <HelpOverlay scrollOffset={0} onScroll={vi.fn()} onDismiss={vi.fn()} />,
     );
     const output = lastFrame() || '';
-    expect(output).toContain('IN GAME MODE');
+    expect(output).toContain('ATTACHED MODE');
     expect(output).toContain('Esc');
-    expect(output).toContain('PAUSE GAME');
+    expect(output).toContain('DETACH');
   });
 
   it('should render global shortcuts section', () => {
@@ -39,7 +39,7 @@ describe('HelpOverlay', () => {
     );
     const output = lastFrame() || '';
     expect(output).toContain('UNIVERSAL');
-    expect(output).toContain('Toggle HOW TO PLAY');
+    expect(output).toContain('Toggle HELP');
   });
 
   it('should render dismiss hint', () => {
