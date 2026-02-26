@@ -26,10 +26,10 @@ Manage multiple Claude Code instances from a single terminal. Start, stop, switc
   <img src="docs/screenshots/cli-help.gif" alt="agentspawn --help" width="700">
 </p>
 
-### Test Suite (984 tests)
+### Test Suite (1010 tests)
 
 <p align="center">
-  <img src="docs/screenshots/tests.gif" alt="Test suite — 984 tests passing" width="700">
+  <img src="docs/screenshots/tests.gif" alt="Test suite — 1010 tests passing" width="700">
 </p>
 
 ## Install
@@ -321,7 +321,7 @@ node dist/index.js tui # Launch the TUI
 ### Test
 
 ```bash
-npm test               # Run all 984 tests (mocked — no real Claude needed)
+npm test               # Run all 1010 tests (mocked — no real Claude needed)
 ```
 
 ### Lint & Format
