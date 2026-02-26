@@ -252,7 +252,7 @@ export class SandboxManager {
         '(version 1)',
         '(allow default)',
         '(deny file-write* (subpath "/"))',
-        `(allow file-write* (subpath "${workdir}") (subpath "/tmp"))`,
+        `(allow file-write* (subpath "${workdir}") (subpath "/tmp") (subpath "${homedir}/.claude"))`,
       ].join('\n');
     }
 
@@ -261,7 +261,7 @@ export class SandboxManager {
         '(version 1)',
         '(allow default)',
         '(deny file-write* (subpath "/"))',
-        `(allow file-write* (subpath "${workdir}") (subpath "/tmp"))`,
+        `(allow file-write* (subpath "${workdir}") (subpath "/tmp") (subpath "${homedir}/.claude"))`,
         '(deny file-read*',
         `  (subpath "${homedir}/.ssh")`,
         `  (subpath "${homedir}/.gnupg")`,

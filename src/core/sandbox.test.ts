@@ -766,6 +766,16 @@ describe('SandboxManager', () => {
         expect(profileContent).toContain('/tmp');
       });
 
+      it('should allow writes to ~/.claude so Claude can persist session state', async () => {
+        mockOs.homedir.mockReturnValue('/home/user');
+        const manager = new SandboxManager('my-session', '/workspace/project', 'sandbox-exec');
+
+        await manager.start();
+
+        const [, profileContent] = mockWriteFile.mock.calls[0] as [string, string, string];
+        expect(profileContent).toContain('/home/user/.claude');
+      });
+
       it('should use tmpdir() from os as the base for mkdtemp', async () => {
         mockOs.tmpdir.mockReturnValue('/var/folders/tmp');
         mockMkdtemp.mockResolvedValue('/var/folders/tmp/agentspawn-test456');
