@@ -94,11 +94,12 @@ export function registerSandboxCommand(program: Command, manager: SessionManager
         return;
       }
 
-      // For Docker: use docker diff via the running container name
+      // For Docker/Podman: use diff via the running container name
       // For bwrap/sandbox-exec: find files modified after session start in workdir
-      if (info.sandboxBackend === 'docker') {
+      if (info.sandboxBackend === 'docker' || info.sandboxBackend === 'podman') {
+        const binary = info.sandboxBackend;
         try {
-          const { stdout } = await execFileAsync('docker', ['diff', `agentspawn-${sessionName}`]);
+          const { stdout } = await execFileAsync(binary, ['diff', `agentspawn-${sessionName}`]);
           const lines = stdout.trim().split('\n').filter(Boolean);
           if (lines.length === 0) {
             console.log('No filesystem changes.');

@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
-import { writeFile, unlink, readdir, stat } from 'node:fs/promises';
+import { writeFile, unlink, readdir, stat, mkdtemp, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,8 +8,22 @@ import type { SandboxBackend, SandboxLevel, SandboxOptions, SandboxTestResult } 
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * Converts a memory limit string (e.g. '512m', '2g', '1024k') to bytes.
+ * Used for bwrap's --rlimit-as which requires an integer byte count.
+ */
+function parseMemoryLimit(s: string): number {
+  const lower = s.toLowerCase();
+  if (lower.endsWith('g')) return Math.round(parseFloat(lower) * 1024 * 1024 * 1024);
+  if (lower.endsWith('m')) return Math.round(parseFloat(lower) * 1024 * 1024);
+  if (lower.endsWith('k')) return Math.round(parseFloat(lower) * 1024);
+  return parseInt(s, 10);
+}
+
 export class SandboxManager {
   private containerId: string | null = null;
+  /** Directory created by mkdtemp that holds the sandbox-exec profile. */
+  private sbProfileDir: string | null = null;
   private sbProfilePath: string | null = null;
   private startedAt: Date | null = null;
 
@@ -24,25 +38,24 @@ export class SandboxManager {
    * Probes backends in preference order and returns the first available.
    * Returns null if no backend is available on this system.
    *
-   * Detection order:
-   * 1. Docker (all platforms): `docker info` exits 0 → 'docker'
-   * 2. Platform-native:
-   *    - Linux: `which bwrap` exits 0 → 'bwrap'
-   *    - macOS: `which sandbox-exec` exits 0 → 'sandbox-exec'
-   * 3. null
+   * Detection order (native-first):
+   * 1. Platform-native backend (zero overhead, no install required):
+   *    - macOS: sandbox-exec (built-in; note: deprecated by Apple in macOS 26.3
+   *             but still fully functional — migrate when it actually breaks)
+   *    - Linux: bwrap (bubblewrap, available on most distros)
+   * 2. Podman — daemonless container runtime, CLI-compatible with Docker
+   * 3. Docker — last resort; requires a running daemon (180 MB overhead)
+   * 4. null
+   *
+   * Rationale for native-first: a developer tool should not force container
+   * startup time (2–5s) and daemon overhead on users who have sandbox-exec
+   * or bwrap available at zero cost. Docker/Podman are opt-in via
+   * --sandbox-backend for those who want full container isolation.
    */
   static async detectBackend(): Promise<SandboxBackend | null> {
-    // 1. Docker — available on all platforms
-    try {
-      await execFileAsync('docker', ['info']);
-      return 'docker';
-    } catch {
-      // Docker not available or not running, continue
-    }
-
-    // 2. Platform-native backend
     const platform = os.platform();
 
+    // 1. Platform-native backend (fastest, zero storage/memory overhead)
     if (platform === 'linux') {
       try {
         await execFileAsync('which', ['bwrap']);
@@ -55,8 +68,24 @@ export class SandboxManager {
         await execFileAsync('which', ['sandbox-exec']);
         return 'sandbox-exec';
       } catch {
-        // sandbox-exec not available
+        // sandbox-exec not available (should not happen on macOS)
       }
+    }
+
+    // 2. Podman — daemonless, rootless by default, CLI-compatible with Docker
+    try {
+      await execFileAsync('podman', ['info']);
+      return 'podman';
+    } catch {
+      // Podman not available or not running
+    }
+
+    // 3. Docker — requires running daemon
+    try {
+      await execFileAsync('docker', ['info']);
+      return 'docker';
+    } catch {
+      // Docker not available or not running
     }
 
     return null;
@@ -92,26 +121,35 @@ export class SandboxManager {
   /**
    * Starts the sandbox.
    *
-   * Docker:
+   * Docker / Podman:
    *   Runs a long-lived container named agentspawn-<sessionName> with the
    *   claude binary and working directory bind-mounted. Stores the container ID.
+   *   Any pre-existing container of the same name is removed first to handle
+   *   cases where a previous session crashed without cleanup.
    *
    * bwrap:
    *   No-op — bwrap is invoked per-prompt via buildSpawnArgs.
    *
    * sandbox-exec:
-   *   Writes a .sb profile to /tmp/agentspawn-<sessionName>.sb that allows
-   *   writes only under workingDirectory and /tmp. Stores the profile path.
+   *   Creates a private temp directory and writes a sandbox profile (.sb) into
+   *   it. Using a private directory (rather than a fixed /tmp path) prevents
+   *   symlink-based injection attacks. Stores the profile path.
    */
   async start(): Promise<void> {
     this.startedAt = new Date();
 
     switch (this.backend) {
+      case 'podman':
       case 'docker': {
+        const binary = this.backend; // 'docker' or 'podman'
         const { stdout: claudePathRaw } = await execFileAsync('which', ['claude']);
         const claudePath = claudePathRaw.trim();
         const homedir = os.homedir();
         const containerName = `agentspawn-${this.sessionName}`;
+
+        // Remove any stale container with the same name (e.g. from a crashed session)
+        // before creating a new one. Errors are intentionally ignored here.
+        await execFileAsync(binary, ['rm', '-f', containerName]).catch(() => {});
 
         const uid = process.getuid?.() ?? 1000;
         const gid = process.getgid?.() ?? 1000;
@@ -121,7 +159,7 @@ export class SandboxManager {
 
         // Arguments passed directly to execFile — no shell interpolation,
         // so session names / paths with spaces or metacharacters are safe.
-        const dockerArgs: string[] = [
+        const containerArgs: string[] = [
           'run', '-d', '--rm',
           '--name', containerName,
           '-v', `${claudePath}:/usr/local/bin/claude:ro`,
@@ -136,13 +174,19 @@ export class SandboxManager {
           '--security-opt', 'no-new-privileges',
         ];
 
+        // Podman rootless mode: --userns=keep-id maps host UID into container so
+        // bind-mounted files have the correct ownership inside the container.
+        if (binary === 'podman') {
+          containerArgs.push('--userns=keep-id');
+        }
+
         if (level === 'standard') {
-          dockerArgs.push(
+          containerArgs.push(
             '--memory', this.options.memoryLimit ?? '512m',
             '--cpus', String(this.options.cpuLimit ?? 1.0),
           );
         } else if (level === 'strict') {
-          dockerArgs.push(
+          containerArgs.push(
             '--memory', this.options.memoryLimit ?? '256m',
             '--cpus', String(this.options.cpuLimit ?? 0.5),
             '--read-only',
@@ -150,9 +194,9 @@ export class SandboxManager {
           );
         }
 
-        dockerArgs.push(image, 'sleep', 'infinity');
+        containerArgs.push(image, 'sleep', 'infinity');
 
-        const { stdout } = await execFileAsync('docker', dockerArgs);
+        const { stdout } = await execFileAsync(binary, containerArgs);
         this.containerId = stdout.trim();
         break;
       }
@@ -174,10 +218,15 @@ export class SandboxManager {
           );
         }
 
-        const profilePath = path.join(os.tmpdir(), `agentspawn-${this.sessionName}.sb`);
+        // Use a private temp directory (not a fixed /tmp path) to prevent
+        // symlink injection: an attacker could pre-create /tmp/agentspawn-X.sb
+        // as a symlink to an arbitrary file, causing writeFile to overwrite it.
+        const tmpDir = await mkdtemp(path.join(os.tmpdir(), 'agentspawn-'));
+        const profilePath = path.join(tmpDir, 'profile.sb');
         const profileContent = this.buildSandboxExecProfile();
 
         await writeFile(profilePath, profileContent, 'utf8');
+        this.sbProfileDir = tmpDir;
         this.sbProfilePath = profilePath;
         break;
       }
@@ -246,9 +295,9 @@ export class SandboxManager {
    * Returns { cmd, args } to use in place of bare `claude` for each prompt
    * invocation. The caller prepends these to the claude argument list.
    *
-   * Docker:       docker exec <containerId> claude ...claudeArgs
-   * bwrap:        bwrap <namespace flags> claude ...claudeArgs
-   * sandbox-exec: sandbox-exec -f <profile> claude ...claudeArgs
+   * Docker/Podman: docker/podman exec <containerId> claude ...claudeArgs
+   * bwrap:         bwrap <namespace flags> claude ...claudeArgs
+   * sandbox-exec:  sandbox-exec -f <profile> claude ...claudeArgs
    */
   buildSpawnArgs(claudeArgs: string[]): { cmd: string; args: string[] } {
     return this.buildArbitrarySpawnArgs('claude', claudeArgs);
@@ -260,9 +309,10 @@ export class SandboxManager {
    */
   buildArbitrarySpawnArgs(executable: string, execArgs: string[]): { cmd: string; args: string[] } {
     switch (this.backend) {
+      case 'podman':
       case 'docker': {
         return {
-          cmd: 'docker',
+          cmd: this.backend,
           args: ['exec', this.containerId!, executable, ...execArgs],
         };
       }
@@ -319,7 +369,8 @@ export class SandboxManager {
           );
 
           if (this.options.memoryLimit) {
-            args.push('--rlimit-as', this.options.memoryLimit);
+            // --rlimit-as requires a byte count; parse '512m', '2g', etc.
+            args.push('--rlimit-as', String(parseMemoryLimit(this.options.memoryLimit)));
           }
 
           args.push(executable, ...execArgs);
@@ -351,7 +402,8 @@ export class SandboxManager {
         );
 
         if (this.options.memoryLimit) {
-          strictArgs.push('--rlimit-as', this.options.memoryLimit);
+          // --rlimit-as requires a byte count; parse '512m', '2g', etc.
+          strictArgs.push('--rlimit-as', String(parseMemoryLimit(this.options.memoryLimit)));
         }
 
         strictArgs.push(executable, ...execArgs);
@@ -383,9 +435,10 @@ export class SandboxManager {
     }
 
     switch (this.backend) {
+      case 'podman':
       case 'docker': {
         if (!this.containerId) return [];
-        const { stdout } = await execFileAsync('docker', ['diff', this.containerId]);
+        const { stdout } = await execFileAsync(this.backend, ['diff', this.containerId]);
         return stdout.split('\n').filter((line) => line.trim().length > 0);
       }
 
@@ -438,11 +491,16 @@ export class SandboxManager {
     // Test 2: write inside workdir — should SUCCEED
     const exitCode2 = await this.runInSandbox(`touch ${workdirCanary}`);
 
-    // Test 3: read credential dir — standard/strict only; should be BLOCKED
+    // Test 3: read credential dir — standard/strict only; should be BLOCKED.
+    // Use `ls ~/.ssh` rather than `cat ~/.ssh/id_rsa` because `cat` exits 1
+    // when the file doesn't exist, making the test pass even if the sandbox
+    // isn't actually blocking the read. `ls` on the directory itself is a
+    // reliable probe: it succeeds (exit 0) if the directory is readable, and
+    // fails (exit 1+) if blocked — regardless of whether any files exist inside.
     let exitCode3: number | null = null;
     if (level !== 'permissive') {
       const homedir = os.homedir();
-      exitCode3 = await this.runInSandbox(`cat ${homedir}/.ssh/id_rsa`);
+      exitCode3 = await this.runInSandbox(`ls ${homedir}/.ssh`);
     }
 
     // Clean up any canary files written inside workdir
@@ -495,25 +553,30 @@ export class SandboxManager {
 
   /**
    * Tears down the sandbox.
-   * Docker:       Force-removes the named container.
-   * sandbox-exec: Deletes the temporary .sb profile file.
-   * bwrap:        No-op.
+   * Docker/Podman: Force-removes the named container.
+   * sandbox-exec:  Removes the private temp directory holding the profile.
+   * bwrap:         No-op.
    */
   async stop(): Promise<void> {
     switch (this.backend) {
+      case 'podman':
       case 'docker': {
         // Guard: if start() was never called or failed before setting containerId,
-        // there is nothing to remove. Mirrors the sandbox-exec null guard below.
+        // there is nothing to remove.
         if (!this.containerId) break;
         const containerName = `agentspawn-${this.sessionName}`;
-        await execFileAsync('docker', ['rm', '-f', containerName]);
+        await execFileAsync(this.backend, ['rm', '-f', containerName]);
         this.containerId = null;
         break;
       }
 
       case 'sandbox-exec': {
-        if (this.sbProfilePath !== null) {
-          await unlink(this.sbProfilePath);
+        // Remove the entire private temp directory (not just the profile file)
+        // to ensure no stale files are left behind even if more files were
+        // written to the directory unexpectedly.
+        if (this.sbProfileDir !== null) {
+          await rm(this.sbProfileDir, { recursive: true, force: true });
+          this.sbProfileDir = null;
           this.sbProfilePath = null;
         }
         break;

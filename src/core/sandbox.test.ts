@@ -18,6 +18,8 @@ vi.mock('node:child_process', () => ({
 vi.mock('node:fs/promises', () => ({
   writeFile: vi.fn().mockResolvedValue(undefined),
   unlink: vi.fn().mockResolvedValue(undefined),
+  mkdtemp: vi.fn().mockResolvedValue('/tmp/agentspawn-test123'),
+  rm: vi.fn().mockResolvedValue(undefined),
   readdir: vi.fn().mockResolvedValue([]),
   stat: vi.fn().mockResolvedValue({ isDirectory: () => false, mtime: new Date(0) }),
 }));
@@ -42,6 +44,8 @@ const mockExecFile = vi.mocked(execFile);
 const mockSpawn = vi.mocked(spawn);
 const mockWriteFile = vi.mocked(fsPromises.writeFile);
 const mockUnlink = vi.mocked(fsPromises.unlink);
+const mockMkdtemp = vi.mocked(fsPromises.mkdtemp);
+const mockRm = vi.mocked(fsPromises.rm);
 const mockReaddir = vi.mocked(fsPromises.readdir);
 const mockStat = vi.mocked(fsPromises.stat);
 const _mockExistsSync = vi.mocked(existsSync);
@@ -99,6 +103,9 @@ describe('SandboxManager', () => {
     mockOs.homedir.mockReturnValue('/home/user');
     mockOs.tmpdir.mockReturnValue('/tmp');
 
+    // Default mkdtemp: return a consistent temp dir path for sandbox-exec tests
+    mockMkdtemp.mockResolvedValue('/tmp/agentspawn-test123');
+
     // Default spawn mock: simulate a child process that exits with code 0
     mockSpawn.mockImplementation((_cmd: unknown, _args: unknown, _opts: unknown) => {
       const emitter = new EventEmitter();
@@ -112,46 +119,84 @@ describe('SandboxManager', () => {
   // -------------------------------------------------------------------------
 
   describe('detectBackend()', () => {
-    it('should return "docker" when docker info succeeds', async () => {
-      execFileSucceeds('Docker version 24.0.0');
+    it('should return "sandbox-exec" as first choice on macOS when available', async () => {
+      mockOs.platform.mockReturnValue('darwin');
+      execFileSucceeds('/usr/bin/sandbox-exec\n');
+
+      const backend = await SandboxManager.detectBackend();
+
+      expect(backend).toBe('sandbox-exec');
+      // Only one execFile call — native backend found immediately, no Podman/Docker check
+      expect(mockExecFile).toHaveBeenCalledTimes(1);
+    });
+
+    it('should return "bwrap" as first choice on Linux when available', async () => {
+      mockOs.platform.mockReturnValue('linux');
+      execFileSucceeds('/usr/bin/bwrap\n');
+
+      const backend = await SandboxManager.detectBackend();
+
+      expect(backend).toBe('bwrap');
+      // Only one execFile call — native backend found immediately, no Podman/Docker check
+      expect(mockExecFile).toHaveBeenCalledTimes(1);
+    });
+
+    it('should fall through to "podman" on macOS when sandbox-exec unavailable', async () => {
+      mockOs.platform.mockReturnValue('darwin');
+      execFileSequence([
+        new Error('no sandbox-exec'), // which sandbox-exec fails
+        { stdout: '' },               // podman info succeeds
+      ]);
+
+      const backend = await SandboxManager.detectBackend();
+
+      expect(backend).toBe('podman');
+    });
+
+    it('should fall through to "podman" on Linux when bwrap unavailable', async () => {
+      mockOs.platform.mockReturnValue('linux');
+      execFileSequence([
+        new Error('no bwrap'), // which bwrap fails
+        { stdout: '' },        // podman info succeeds
+      ]);
+
+      const backend = await SandboxManager.detectBackend();
+
+      expect(backend).toBe('podman');
+    });
+
+    it('should fall through to "docker" on macOS when sandbox-exec and podman unavailable', async () => {
+      mockOs.platform.mockReturnValue('darwin');
+      execFileSequence([
+        new Error('no sandbox-exec'),        // which sandbox-exec fails
+        new Error('no podman'),              // podman info fails
+        { stdout: 'Docker version 24.0.0' }, // docker info succeeds
+      ]);
 
       const backend = await SandboxManager.detectBackend();
 
       expect(backend).toBe('docker');
     });
 
-    it('should return "bwrap" on Linux when docker fails but bwrap is available', async () => {
+    it('should fall through to "docker" on Linux when bwrap and podman unavailable', async () => {
       mockOs.platform.mockReturnValue('linux');
-
       execFileSequence([
-        new Error('docker: command not found'),   // docker info fails
-        { stdout: '/usr/bin/bwrap\n' },           // which bwrap succeeds
+        new Error('no bwrap'),               // which bwrap fails
+        new Error('no podman'),              // podman info fails
+        { stdout: 'Docker version 24.0.0' }, // docker info succeeds
       ]);
 
       const backend = await SandboxManager.detectBackend();
 
-      expect(backend).toBe('bwrap');
+      expect(backend).toBe('docker');
     });
 
-    it('should return "sandbox-exec" on macOS when docker fails but sandbox-exec is available', async () => {
+    it('should return null on macOS when all backends are unavailable', async () => {
       mockOs.platform.mockReturnValue('darwin');
-
       execFileSequence([
-        new Error('Cannot connect to Docker daemon'), // docker info fails
-        { stdout: '/usr/bin/sandbox-exec\n' },        // which sandbox-exec succeeds
-      ]);
-
-      const backend = await SandboxManager.detectBackend();
-
-      expect(backend).toBe('sandbox-exec');
-    });
-
-    it('should return null when no backend is available', async () => {
-      mockOs.platform.mockReturnValue('darwin');
-
-      execFileSequence([
-        new Error('docker: command not found'),      // docker info fails
-        new Error('sandbox-exec: command not found'), // which sandbox-exec fails
+        new Error('no sandbox-exec'), // which sandbox-exec fails
+        new Error('no podman'),       // podman info fails
+        new Error('no docker'),       // docker info fails
       ]);
 
       const backend = await SandboxManager.detectBackend();
@@ -159,12 +204,12 @@ describe('SandboxManager', () => {
       expect(backend).toBe(null);
     });
 
-    it('should return null on Linux when docker and bwrap are both unavailable', async () => {
+    it('should return null on Linux when all backends are unavailable', async () => {
       mockOs.platform.mockReturnValue('linux');
-
       execFileSequence([
-        new Error('docker: command not found'), // docker info fails
-        new Error('bwrap: command not found'),  // which bwrap fails
+        new Error('no bwrap'),  // which bwrap fails
+        new Error('no podman'), // podman info fails
+        new Error('no docker'), // docker info fails
       ]);
 
       const backend = await SandboxManager.detectBackend();
@@ -172,36 +217,70 @@ describe('SandboxManager', () => {
       expect(backend).toBe(null);
     });
 
-    it('should not check for bwrap on macOS when docker fails', async () => {
+    it('should check sandbox-exec before podman and docker on macOS', async () => {
       mockOs.platform.mockReturnValue('darwin');
-
       execFileSequence([
-        new Error('docker not running'), // docker info fails
-        new Error('no sandbox-exec'),    // which sandbox-exec fails
+        new Error('no sandbox-exec'),
+        new Error('no podman'),
+        new Error('no docker'),
       ]);
 
       await SandboxManager.detectBackend();
 
-      // Exactly two execFile calls: docker info + which sandbox-exec (not bwrap)
-      expect(mockExecFile).toHaveBeenCalledTimes(2);
-      const secondCallArgs = mockExecFile.mock.calls[1][1] as string[];
-      expect(secondCallArgs).toContain('sandbox-exec');
-      expect(secondCallArgs).not.toContain('bwrap');
+      expect(mockExecFile).toHaveBeenCalledTimes(3);
+      const firstCallArgs = mockExecFile.mock.calls[0][1] as string[];
+      expect(firstCallArgs).toContain('sandbox-exec');
+      expect(firstCallArgs).not.toContain('bwrap');
+      expect(firstCallArgs).not.toContain('docker');
     });
 
-    it('should not check for sandbox-exec on Linux when docker fails', async () => {
+    it('should check bwrap before podman and docker on Linux', async () => {
       mockOs.platform.mockReturnValue('linux');
-
       execFileSequence([
-        new Error('docker not running'), // docker info fails
-        new Error('no bwrap'),           // which bwrap fails
+        new Error('no bwrap'),
+        new Error('no podman'),
+        new Error('no docker'),
       ]);
 
       await SandboxManager.detectBackend();
 
-      const secondCallArgs = mockExecFile.mock.calls[1][1] as string[];
-      expect(secondCallArgs).toContain('bwrap');
-      expect(secondCallArgs).not.toContain('sandbox-exec');
+      expect(mockExecFile).toHaveBeenCalledTimes(3);
+      const firstCallArgs = mockExecFile.mock.calls[0][1] as string[];
+      expect(firstCallArgs).toContain('bwrap');
+      expect(firstCallArgs).not.toContain('sandbox-exec');
+      expect(firstCallArgs).not.toContain('docker');
+    });
+
+    it('should not check for bwrap on macOS', async () => {
+      mockOs.platform.mockReturnValue('darwin');
+      execFileSequence([
+        new Error('no sandbox-exec'),
+        new Error('no podman'),
+        new Error('no docker'),
+      ]);
+
+      await SandboxManager.detectBackend();
+
+      // None of the calls should contain 'bwrap'
+      const allArgs = mockExecFile.mock.calls.map((call) => call[1] as string[]);
+      const hasBwrap = allArgs.some((args) => args.includes('bwrap'));
+      expect(hasBwrap).toBe(false);
+    });
+
+    it('should not check for sandbox-exec on Linux', async () => {
+      mockOs.platform.mockReturnValue('linux');
+      execFileSequence([
+        new Error('no bwrap'),
+        new Error('no podman'),
+        new Error('no docker'),
+      ]);
+
+      await SandboxManager.detectBackend();
+
+      // None of the calls should contain 'sandbox-exec'
+      const allArgs = mockExecFile.mock.calls.map((call) => call[1] as string[]);
+      const hasSandboxExec = allArgs.some((args) => args.includes('sandbox-exec'));
+      expect(hasSandboxExec).toBe(false);
     });
   });
 
@@ -241,17 +320,35 @@ describe('SandboxManager', () => {
 
   describe('start()', () => {
     describe('docker backend', () => {
-      it('should use --network bridge not --network host', async () => {
+      it('should remove stale container before starting', async () => {
         const manager = new SandboxManager('my-session', '/workspace/project', 'docker');
 
         execFileSequence([
           { stdout: '/usr/local/bin/claude\n' }, // which claude
-          { stdout: 'container-id-abc123\n' },   // docker run
+          { stdout: '' },                          // docker rm -f (pre-cleanup)
+          { stdout: 'container-id-abc123\n' },    // docker run
         ]);
 
         await manager.start();
 
-        const dockerRunArgs = mockExecFile.mock.calls[1][1] as string[];
+        // Second call (index 1) should be the pre-cleanup rm -f
+        expect(mockExecFile.mock.calls[1][0]).toBe('docker');
+        const rmArgs = mockExecFile.mock.calls[1][1] as string[];
+        expect(rmArgs).toEqual(['rm', '-f', 'agentspawn-my-session']);
+      });
+
+      it('should use --network bridge not --network host', async () => {
+        const manager = new SandboxManager('my-session', '/workspace/project', 'docker');
+
+        execFileSequence([
+          { stdout: '/usr/local/bin/claude\n' },
+          { stdout: '' },
+          { stdout: 'container-id-abc123\n' },
+        ]);
+
+        await manager.start();
+
+        const dockerRunArgs = mockExecFile.mock.calls[2][1] as string[];
         expect(dockerRunArgs).toContain('--network');
         expect(dockerRunArgs).toContain('bridge');
         expect(dockerRunArgs).not.toContain('host');
@@ -262,12 +359,13 @@ describe('SandboxManager', () => {
 
         execFileSequence([
           { stdout: '/usr/local/bin/claude\n' },
+          { stdout: '' },
           { stdout: 'container-id-abc123\n' },
         ]);
 
         await manager.start();
 
-        const dockerRunArgs = mockExecFile.mock.calls[1][1] as string[];
+        const dockerRunArgs = mockExecFile.mock.calls[2][1] as string[];
         expect(dockerRunArgs).toContain('-v');
         expect(dockerRunArgs).toContain('/usr/local/bin/claude:/usr/local/bin/claude:ro');
       });
@@ -277,12 +375,13 @@ describe('SandboxManager', () => {
 
         execFileSequence([
           { stdout: '/usr/local/bin/claude\n' },
+          { stdout: '' },
           { stdout: 'container-id-abc123\n' },
         ]);
 
         await manager.start();
 
-        const dockerRunArgs = mockExecFile.mock.calls[1][1] as string[];
+        const dockerRunArgs = mockExecFile.mock.calls[2][1] as string[];
         expect(dockerRunArgs).toContain('-v');
         expect(dockerRunArgs).toContain('/workspace/project:/workspace/project:rw');
       });
@@ -292,12 +391,13 @@ describe('SandboxManager', () => {
 
         execFileSequence([
           { stdout: '/usr/local/bin/claude\n' },
+          { stdout: '' },
           { stdout: 'container-id-abc123\n' },
         ]);
 
         await manager.start();
 
-        const dockerRunArgs = mockExecFile.mock.calls[1][1] as string[];
+        const dockerRunArgs = mockExecFile.mock.calls[2][1] as string[];
         expect(dockerRunArgs).toContain('--name');
         expect(dockerRunArgs).toContain('agentspawn-my-session');
       });
@@ -307,6 +407,7 @@ describe('SandboxManager', () => {
 
         execFileSequence([
           { stdout: '/usr/local/bin/claude\n' },
+          { stdout: '' },
           { stdout: 'container-id-abc123\n' },
         ]);
 
@@ -322,12 +423,13 @@ describe('SandboxManager', () => {
 
         execFileSequence([
           { stdout: '/usr/local/bin/claude\n' },
+          { stdout: '' },
           { stdout: 'container-id-abc123\n' },
         ]);
 
         await manager.start();
 
-        const dockerRunArgs = mockExecFile.mock.calls[1][1] as string[];
+        const dockerRunArgs = mockExecFile.mock.calls[2][1] as string[];
         expect(dockerRunArgs).toContain('--workdir');
         expect(dockerRunArgs).toContain('/workspace/project');
       });
@@ -338,12 +440,13 @@ describe('SandboxManager', () => {
 
         execFileSequence([
           { stdout: '/usr/local/bin/claude\n' },
+          { stdout: '' },
           { stdout: 'container-id-abc123\n' },
         ]);
 
         await manager.start();
 
-        const dockerRunArgs = mockExecFile.mock.calls[1][1] as string[];
+        const dockerRunArgs = mockExecFile.mock.calls[2][1] as string[];
         expect(dockerRunArgs).toContain('-v');
         expect(dockerRunArgs).toContain('/home/user/.claude:/root/.claude:ro');
       });
@@ -353,12 +456,13 @@ describe('SandboxManager', () => {
 
         execFileSequence([
           { stdout: '/usr/local/bin/claude\n' },
+          { stdout: '' },
           { stdout: 'container-id-abc123\n' },
         ]);
 
         await manager.start();
 
-        const dockerRunArgs = mockExecFile.mock.calls[1][1] as string[];
+        const dockerRunArgs = mockExecFile.mock.calls[2][1] as string[];
         expect(dockerRunArgs).toContain('--user');
       });
 
@@ -367,12 +471,13 @@ describe('SandboxManager', () => {
 
         execFileSequence([
           { stdout: '/usr/local/bin/claude\n' },
+          { stdout: '' },
           { stdout: 'container-id-abc123\n' },
         ]);
 
         await manager.start();
 
-        const dockerRunArgs = mockExecFile.mock.calls[1][1] as string[];
+        const dockerRunArgs = mockExecFile.mock.calls[2][1] as string[];
         expect(dockerRunArgs).toContain('--cap-drop');
         expect(dockerRunArgs).toContain('ALL');
       });
@@ -382,31 +487,47 @@ describe('SandboxManager', () => {
 
         execFileSequence([
           { stdout: '/usr/local/bin/claude\n' },
+          { stdout: '' },
           { stdout: 'container-id-abc123\n' },
         ]);
 
         await manager.start();
 
-        const dockerRunArgs = mockExecFile.mock.calls[1][1] as string[];
+        const dockerRunArgs = mockExecFile.mock.calls[2][1] as string[];
         expect(dockerRunArgs).toContain('--security-opt');
         expect(dockerRunArgs).toContain('no-new-privileges');
+      });
+
+      it('should NOT include --userns=keep-id for docker', async () => {
+        const manager = new SandboxManager('my-session', '/workspace/project', 'docker');
+
+        execFileSequence([
+          { stdout: '/usr/local/bin/claude\n' },
+          { stdout: '' },
+          { stdout: 'container-id-abc123\n' },
+        ]);
+
+        await manager.start();
+
+        const dockerRunArgs = mockExecFile.mock.calls[2][1] as string[];
+        expect(dockerRunArgs).not.toContain('--userns=keep-id');
       });
 
       describe('isolation levels', () => {
         it('should include --network bridge (not host) for all levels', async () => {
           const manager = new SandboxManager('s', '/w', 'docker', { level: 'standard' });
-          execFileSequence([{ stdout: '/usr/local/bin/claude\n' }, { stdout: 'cid\n' }]);
+          execFileSequence([{ stdout: '/usr/local/bin/claude\n' }, { stdout: '' }, { stdout: 'cid\n' }]);
           await manager.start();
-          const args = mockExecFile.mock.calls[1][1] as string[];
+          const args = mockExecFile.mock.calls[2][1] as string[];
           expect(args).toContain('bridge');
           expect(args).not.toContain('host');
         });
 
         it('should include memory and cpu limits for standard level', async () => {
           const manager = new SandboxManager('s', '/w', 'docker', { level: 'standard' });
-          execFileSequence([{ stdout: '/usr/local/bin/claude\n' }, { stdout: 'cid\n' }]);
+          execFileSequence([{ stdout: '/usr/local/bin/claude\n' }, { stdout: '' }, { stdout: 'cid\n' }]);
           await manager.start();
-          const args = mockExecFile.mock.calls[1][1] as string[];
+          const args = mockExecFile.mock.calls[2][1] as string[];
           expect(args).toContain('--memory');
           expect(args).toContain('512m'); // default
           expect(args).toContain('--cpus');
@@ -415,57 +536,196 @@ describe('SandboxManager', () => {
 
         it('should use custom memoryLimit when provided', async () => {
           const manager = new SandboxManager('s', '/w', 'docker', { level: 'standard', memoryLimit: '1g' });
-          execFileSequence([{ stdout: '/usr/local/bin/claude\n' }, { stdout: 'cid\n' }]);
+          execFileSequence([{ stdout: '/usr/local/bin/claude\n' }, { stdout: '' }, { stdout: 'cid\n' }]);
           await manager.start();
-          const args = mockExecFile.mock.calls[1][1] as string[];
+          const args = mockExecFile.mock.calls[2][1] as string[];
           expect(args).toContain('1g');
         });
 
         it('should include --read-only and --tmpfs for strict level', async () => {
           const manager = new SandboxManager('s', '/w', 'docker', { level: 'strict' });
-          execFileSequence([{ stdout: '/usr/local/bin/claude\n' }, { stdout: 'cid\n' }]);
+          execFileSequence([{ stdout: '/usr/local/bin/claude\n' }, { stdout: '' }, { stdout: 'cid\n' }]);
           await manager.start();
-          const args = mockExecFile.mock.calls[1][1] as string[];
+          const args = mockExecFile.mock.calls[2][1] as string[];
           expect(args).toContain('--read-only');
           expect(args).toContain('--tmpfs');
         });
 
         it('should use custom image when provided', async () => {
           const manager = new SandboxManager('s', '/w', 'docker', { image: 'my-image:latest' });
-          execFileSequence([{ stdout: '/usr/local/bin/claude\n' }, { stdout: 'cid\n' }]);
+          execFileSequence([{ stdout: '/usr/local/bin/claude\n' }, { stdout: '' }, { stdout: 'cid\n' }]);
           await manager.start();
-          const args = mockExecFile.mock.calls[1][1] as string[];
+          const args = mockExecFile.mock.calls[2][1] as string[];
           expect(args).toContain('my-image:latest');
         });
 
         it('should not include --memory or --cpus for permissive level', async () => {
           const manager = new SandboxManager('s', '/w', 'docker', { level: 'permissive' });
-          execFileSequence([{ stdout: '/usr/local/bin/claude\n' }, { stdout: 'cid\n' }]);
+          execFileSequence([{ stdout: '/usr/local/bin/claude\n' }, { stdout: '' }, { stdout: 'cid\n' }]);
           await manager.start();
-          const args = mockExecFile.mock.calls[1][1] as string[];
+          const args = mockExecFile.mock.calls[2][1] as string[];
           expect(args).not.toContain('--memory');
           expect(args).not.toContain('--cpus');
         });
 
         it('should not include --read-only for standard level', async () => {
           const manager = new SandboxManager('s', '/w', 'docker', { level: 'standard' });
-          execFileSequence([{ stdout: '/usr/local/bin/claude\n' }, { stdout: 'cid\n' }]);
+          execFileSequence([{ stdout: '/usr/local/bin/claude\n' }, { stdout: '' }, { stdout: 'cid\n' }]);
           await manager.start();
-          const args = mockExecFile.mock.calls[1][1] as string[];
+          const args = mockExecFile.mock.calls[2][1] as string[];
           expect(args).not.toContain('--read-only');
         });
       });
     });
 
+    describe('podman backend', () => {
+      it('should remove stale container before starting', async () => {
+        const manager = new SandboxManager('my-session', '/workspace/project', 'podman');
+
+        execFileSequence([
+          { stdout: '/usr/local/bin/claude\n' }, // which claude
+          { stdout: '' },                          // podman rm -f (pre-cleanup)
+          { stdout: 'container-id-abc123\n' },    // podman run
+        ]);
+
+        await manager.start();
+
+        expect(mockExecFile.mock.calls[1][0]).toBe('podman');
+        const rmArgs = mockExecFile.mock.calls[1][1] as string[];
+        expect(rmArgs).toEqual(['rm', '-f', 'agentspawn-my-session']);
+      });
+
+      it('should include --userns=keep-id for rootless user mapping', async () => {
+        const manager = new SandboxManager('my-session', '/workspace/project', 'podman');
+
+        execFileSequence([
+          { stdout: '/usr/local/bin/claude\n' },
+          { stdout: '' },
+          { stdout: 'container-id-abc123\n' },
+        ]);
+
+        await manager.start();
+
+        const podmanRunArgs = mockExecFile.mock.calls[2][1] as string[];
+        expect(podmanRunArgs).toContain('--userns=keep-id');
+      });
+
+      it('should use --network bridge', async () => {
+        const manager = new SandboxManager('my-session', '/workspace/project', 'podman');
+
+        execFileSequence([
+          { stdout: '/usr/local/bin/claude\n' },
+          { stdout: '' },
+          { stdout: 'container-id-abc123\n' },
+        ]);
+
+        await manager.start();
+
+        const podmanRunArgs = mockExecFile.mock.calls[2][1] as string[];
+        expect(podmanRunArgs).toContain('--network');
+        expect(podmanRunArgs).toContain('bridge');
+      });
+
+      it('should bind-mount the claude binary read-only', async () => {
+        const manager = new SandboxManager('my-session', '/workspace/project', 'podman');
+
+        execFileSequence([
+          { stdout: '/usr/local/bin/claude\n' },
+          { stdout: '' },
+          { stdout: 'container-id-abc123\n' },
+        ]);
+
+        await manager.start();
+
+        const podmanRunArgs = mockExecFile.mock.calls[2][1] as string[];
+        expect(podmanRunArgs).toContain('-v');
+        expect(podmanRunArgs).toContain('/usr/local/bin/claude:/usr/local/bin/claude:ro');
+      });
+
+      it('should bind-mount the working directory read-write', async () => {
+        const manager = new SandboxManager('my-session', '/workspace/project', 'podman');
+
+        execFileSequence([
+          { stdout: '/usr/local/bin/claude\n' },
+          { stdout: '' },
+          { stdout: 'container-id-abc123\n' },
+        ]);
+
+        await manager.start();
+
+        const podmanRunArgs = mockExecFile.mock.calls[2][1] as string[];
+        expect(podmanRunArgs).toContain('-v');
+        expect(podmanRunArgs).toContain('/workspace/project:/workspace/project:rw');
+      });
+
+      it('should name the container agentspawn-<sessionName>', async () => {
+        const manager = new SandboxManager('my-session', '/workspace/project', 'podman');
+
+        execFileSequence([
+          { stdout: '/usr/local/bin/claude\n' },
+          { stdout: '' },
+          { stdout: 'container-id-abc123\n' },
+        ]);
+
+        await manager.start();
+
+        const podmanRunArgs = mockExecFile.mock.calls[2][1] as string[];
+        expect(podmanRunArgs).toContain('--name');
+        expect(podmanRunArgs).toContain('agentspawn-my-session');
+      });
+
+      it('should store the trimmed container ID', async () => {
+        const manager = new SandboxManager('my-session', '/workspace/project', 'podman');
+
+        execFileSequence([
+          { stdout: '/usr/local/bin/claude\n' },
+          { stdout: '' },
+          { stdout: 'container-id-abc123\n' },
+        ]);
+
+        await manager.start();
+
+        const { args } = manager.buildSpawnArgs(['--print']);
+        expect(args).toContain('container-id-abc123');
+      });
+
+      it('should include --cap-drop ALL and --security-opt no-new-privileges', async () => {
+        const manager = new SandboxManager('my-session', '/workspace/project', 'podman');
+
+        execFileSequence([
+          { stdout: '/usr/local/bin/claude\n' },
+          { stdout: '' },
+          { stdout: 'container-id-abc123\n' },
+        ]);
+
+        await manager.start();
+
+        const podmanRunArgs = mockExecFile.mock.calls[2][1] as string[];
+        expect(podmanRunArgs).toContain('--cap-drop');
+        expect(podmanRunArgs).toContain('ALL');
+        expect(podmanRunArgs).toContain('--security-opt');
+        expect(podmanRunArgs).toContain('no-new-privileges');
+      });
+    });
+
     describe('sandbox-exec backend', () => {
-      it('should write a .sb profile to /tmp/agentspawn-<sessionName>.sb', async () => {
+      it('should create a private temp directory for the profile', async () => {
+        const manager = new SandboxManager('my-session', '/workspace/project', 'sandbox-exec');
+
+        await manager.start();
+
+        expect(mockMkdtemp).toHaveBeenCalledTimes(1);
+        expect(mockMkdtemp).toHaveBeenCalledWith('/tmp/agentspawn-');
+      });
+
+      it('should write the profile to profile.sb inside the temp directory', async () => {
         const manager = new SandboxManager('my-session', '/workspace/project', 'sandbox-exec');
 
         await manager.start();
 
         expect(mockWriteFile).toHaveBeenCalledTimes(1);
         const [filePath] = mockWriteFile.mock.calls[0] as [string, string, string];
-        expect(filePath).toBe('/tmp/agentspawn-my-session.sb');
+        expect(filePath).toBe('/tmp/agentspawn-test123/profile.sb');
       });
 
       it('should write a profile that starts with (version 1)', async () => {
@@ -506,15 +766,17 @@ describe('SandboxManager', () => {
         expect(profileContent).toContain('/tmp');
       });
 
-      it('should use tmpdir() from os for the profile path', async () => {
+      it('should use tmpdir() from os as the base for mkdtemp', async () => {
         mockOs.tmpdir.mockReturnValue('/var/folders/tmp');
+        mockMkdtemp.mockResolvedValue('/var/folders/tmp/agentspawn-test456');
         const manager = new SandboxManager('my-session', '/workspace/project', 'sandbox-exec');
 
         await manager.start();
 
+        expect(mockMkdtemp).toHaveBeenCalledWith('/var/folders/tmp/agentspawn-');
         const [filePath] = mockWriteFile.mock.calls[0] as [string, string, string];
         expect(filePath).toContain('/var/folders/tmp');
-        expect(filePath).toContain('agentspawn-my-session.sb');
+        expect(filePath).toBe('/var/folders/tmp/agentspawn-test456/profile.sb');
       });
 
       it('should not call execFile', async () => {
@@ -560,6 +822,7 @@ describe('SandboxManager', () => {
 
         execFileSequence([
           { stdout: '/usr/local/bin/claude\n' },
+          { stdout: '' },
           { stdout: 'abc123\n' },
         ]);
         await manager.start();
@@ -574,6 +837,7 @@ describe('SandboxManager', () => {
 
         execFileSequence([
           { stdout: '/usr/local/bin/claude\n' },
+          { stdout: '' },
           { stdout: 'abc123\n' },
         ]);
         await manager.start();
@@ -590,6 +854,7 @@ describe('SandboxManager', () => {
 
         execFileSequence([
           { stdout: '/usr/local/bin/claude\n' },
+          { stdout: '' },
           { stdout: 'abc123\n' },
         ]);
         await manager.start();
@@ -605,6 +870,7 @@ describe('SandboxManager', () => {
 
         execFileSequence([
           { stdout: '/usr/local/bin/claude\n' },
+          { stdout: '' },
           { stdout: 'containerXYZ\n' },
         ]);
         await manager.start();
@@ -612,6 +878,56 @@ describe('SandboxManager', () => {
         const result = manager.buildSpawnArgs([]);
 
         expect(result.args).toEqual(['exec', 'containerXYZ', 'claude']);
+      });
+    });
+
+    describe('podman backend (after start)', () => {
+      it('should return cmd: "podman" with exec subcommand', async () => {
+        const manager = new SandboxManager('proj', '/work', 'podman');
+
+        execFileSequence([
+          { stdout: '/usr/local/bin/claude\n' },
+          { stdout: '' },
+          { stdout: 'abc123\n' },
+        ]);
+        await manager.start();
+
+        const result = manager.buildSpawnArgs(['--print']);
+
+        expect(result.cmd).toBe('podman');
+      });
+
+      it('should include "exec" and the container ID before "claude"', async () => {
+        const manager = new SandboxManager('proj', '/work', 'podman');
+
+        execFileSequence([
+          { stdout: '/usr/local/bin/claude\n' },
+          { stdout: '' },
+          { stdout: 'abc123\n' },
+        ]);
+        await manager.start();
+
+        const result = manager.buildSpawnArgs(['--print']);
+
+        expect(result.args[0]).toBe('exec');
+        expect(result.args[1]).toBe('abc123');
+        expect(result.args[2]).toBe('claude');
+      });
+
+      it('should append claudeArgs after "claude"', async () => {
+        const manager = new SandboxManager('proj', '/work', 'podman');
+
+        execFileSequence([
+          { stdout: '/usr/local/bin/claude\n' },
+          { stdout: '' },
+          { stdout: 'abc123\n' },
+        ]);
+        await manager.start();
+
+        const claudeArgs = ['--print', '--output-format', 'stream-json'];
+        const result = manager.buildSpawnArgs(claudeArgs);
+
+        expect(result.args).toEqual(['exec', 'abc123', 'claude', ...claudeArgs]);
       });
     });
 
@@ -745,15 +1061,14 @@ describe('SandboxManager', () => {
         expect(result.cmd).toBe('sandbox-exec');
       });
 
-      it('should include -f followed by the profile path', async () => {
-        mockOs.tmpdir.mockReturnValue('/tmp');
+      it('should include -f followed by the profile path inside the temp directory', async () => {
         const manager = new SandboxManager('sb-session', '/work', 'sandbox-exec');
         await manager.start();
 
         const result = manager.buildSpawnArgs(['--print']);
 
         expect(result.args[0]).toBe('-f');
-        expect(result.args[1]).toBe('/tmp/agentspawn-sb-session.sb');
+        expect(result.args[1]).toBe('/tmp/agentspawn-test123/profile.sb');
       });
 
       it('should place "claude" after the profile arguments', async () => {
@@ -772,7 +1087,7 @@ describe('SandboxManager', () => {
         const claudeArgs = ['--print', '--output-format', 'stream-json', '--verbose'];
         const result = manager.buildSpawnArgs(claudeArgs);
 
-        expect(result.args).toEqual(['-f', '/tmp/agentspawn-sb-session.sb', 'claude', ...claudeArgs]);
+        expect(result.args).toEqual(['-f', '/tmp/agentspawn-test123/profile.sb', 'claude', ...claudeArgs]);
       });
     });
   });
@@ -784,9 +1099,19 @@ describe('SandboxManager', () => {
   describe('buildArbitrarySpawnArgs()', () => {
     it('docker: should use the given executable instead of claude', async () => {
       const manager = new SandboxManager('s', '/w', 'docker');
-      execFileSequence([{ stdout: '/usr/local/bin/claude\n' }, { stdout: 'cid\n' }]);
+      execFileSequence([{ stdout: '/usr/local/bin/claude\n' }, { stdout: '' }, { stdout: 'cid\n' }]);
       await manager.start();
       const result = manager.buildArbitrarySpawnArgs('sh', ['-c', 'echo hi']);
+      expect(result.args).toContain('sh');
+      expect(result.args).not.toContain('claude');
+    });
+
+    it('podman: should use the given executable and return cmd: "podman"', async () => {
+      const manager = new SandboxManager('s', '/w', 'podman');
+      execFileSequence([{ stdout: '/usr/local/bin/claude\n' }, { stdout: '' }, { stdout: 'cid\n' }]);
+      await manager.start();
+      const result = manager.buildArbitrarySpawnArgs('sh', ['-c', 'echo hi']);
+      expect(result.cmd).toBe('podman');
       expect(result.args).toContain('sh');
       expect(result.args).not.toContain('claude');
     });
@@ -858,12 +1183,27 @@ describe('SandboxManager', () => {
       const manager = new SandboxManager('s', '/w', 'docker');
       execFileSequence([
         { stdout: '/usr/local/bin/claude\n' },
-        { stdout: 'abc123\n' },
-        { stdout: 'A /w/foo.ts\nC /w/bar.ts\n' }, // docker diff output
+        { stdout: '' },                              // pre-cleanup rm -f
+        { stdout: 'abc123\n' },                      // docker run → container ID
+        { stdout: 'A /w/foo.ts\nC /w/bar.ts\n' },  // docker diff output
       ]);
       await manager.start();
       const changes = await manager.diff();
       expect(mockExecFile).toHaveBeenCalledWith('docker', ['diff', 'abc123'], expect.any(Function));
+      expect(changes).toEqual(['A /w/foo.ts', 'C /w/bar.ts']);
+    });
+
+    it('podman: should call podman diff with the container ID', async () => {
+      const manager = new SandboxManager('s', '/w', 'podman');
+      execFileSequence([
+        { stdout: '/usr/local/bin/claude\n' },
+        { stdout: '' },                              // pre-cleanup rm -f
+        { stdout: 'abc123\n' },                      // podman run → container ID
+        { stdout: 'A /w/foo.ts\nC /w/bar.ts\n' },  // podman diff output
+      ]);
+      await manager.start();
+      const changes = await manager.diff();
+      expect(mockExecFile).toHaveBeenCalledWith('podman', ['diff', 'abc123'], expect.any(Function));
       expect(changes).toEqual(['A /w/foo.ts', 'C /w/bar.ts']);
     });
 
@@ -991,6 +1331,28 @@ describe('SandboxManager', () => {
       expect(result.passed).toBe(true);
     });
 
+    it('should probe ls ~/.ssh not cat ~/.ssh/id_rsa for credential test', async () => {
+      const manager = new SandboxManager('s', '/workspace', 'sandbox-exec', { level: 'standard' });
+      mockOs.homedir.mockReturnValue('/home/testuser');
+      await manager.start();
+      vi.clearAllMocks();
+
+      let spawnCallCount = 0;
+      mockSpawn.mockImplementation((_cmd: unknown, _args: unknown, _opts: unknown) => {
+        const emitter = new EventEmitter();
+        const exitCode = spawnCallCount++ === 1 ? 0 : 1;
+        setTimeout(() => emitter.emit('close', exitCode), 0);
+        return emitter as unknown as ReturnType<typeof spawn>;
+      });
+
+      await manager.runIsolationTest();
+
+      // The third spawn call (credential test) should use 'ls ~/.ssh', not 'cat'
+      const thirdSpawnArgs = mockSpawn.mock.calls[2][1] as string[];
+      expect(thirdSpawnArgs).toContain('ls /home/testuser/.ssh');
+      expect(thirdSpawnArgs.join(' ')).not.toContain('cat');
+    });
+
     it('should include backend and level in the result', async () => {
       const manager = new SandboxManager('s', '/workspace', 'bwrap', { level: 'permissive' });
       await manager.start();
@@ -1021,6 +1383,7 @@ describe('SandboxManager', () => {
 
         execFileSequence([
           { stdout: '/usr/local/bin/claude\n' },
+          { stdout: '' },                          // pre-cleanup in start
           { stdout: 'container-id-abc123\n' },
         ]);
 
@@ -1043,8 +1406,9 @@ describe('SandboxManager', () => {
 
         execFileSequence([
           { stdout: '/usr/local/bin/claude\n' },
-          { stdout: 'container-id-abc123\n' },
-          { stdout: '' }, // docker rm -f response
+          { stdout: '' },                          // pre-cleanup in start
+          { stdout: 'container-id-abc123\n' },     // docker run
+          { stdout: '' },                           // docker rm -f in stop
         ]);
 
         await manager.start();
@@ -1062,22 +1426,56 @@ describe('SandboxManager', () => {
       });
     });
 
-    describe('sandbox-exec backend', () => {
-      it('should unlink the profile file', async () => {
-        mockOs.tmpdir.mockReturnValue('/tmp');
-        const manager = new SandboxManager('my-session', '/workspace/project', 'sandbox-exec');
+    describe('podman backend', () => {
+      it('should call podman rm -f agentspawn-<sessionName>', async () => {
+        const manager = new SandboxManager('my-session', '/workspace/project', 'podman');
+
+        execFileSequence([
+          { stdout: '/usr/local/bin/claude\n' },
+          { stdout: '' },                          // pre-cleanup in start
+          { stdout: 'container-id-abc123\n' },
+        ]);
 
         await manager.start();
         vi.clearAllMocks();
 
+        execFileSucceeds('');
+
         await manager.stop();
 
-        expect(mockUnlink).toHaveBeenCalledTimes(1);
-        const [unlinkPath] = mockUnlink.mock.calls[0] as [string];
-        expect(unlinkPath).toBe('/tmp/agentspawn-my-session.sb');
+        expect(mockExecFile).toHaveBeenCalledWith(
+          'podman',
+          ['rm', '-f', 'agentspawn-my-session'],
+          expect.any(Function),
+        );
       });
 
-      it('should not call execFile', async () => {
+      it('should resolve without throwing', async () => {
+        const manager = new SandboxManager('my-session', '/workspace/project', 'podman');
+
+        execFileSequence([
+          { stdout: '/usr/local/bin/claude\n' },
+          { stdout: '' },
+          { stdout: 'container-id-abc123\n' },
+          { stdout: '' }, // podman rm -f in stop
+        ]);
+
+        await manager.start();
+
+        await expect(manager.stop()).resolves.toBeUndefined();
+      });
+
+      it('should be a no-op if stop() is called before start()', async () => {
+        const manager = new SandboxManager('my-session', '/workspace/project', 'podman');
+
+        await manager.stop();
+
+        expect(mockExecFile).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('sandbox-exec backend', () => {
+      it('should remove the profile temp directory', async () => {
         const manager = new SandboxManager('my-session', '/workspace/project', 'sandbox-exec');
 
         await manager.start();
@@ -1085,22 +1483,35 @@ describe('SandboxManager', () => {
 
         await manager.stop();
 
+        expect(mockRm).toHaveBeenCalledTimes(1);
+        expect(mockRm).toHaveBeenCalledWith('/tmp/agentspawn-test123', { recursive: true, force: true });
+      });
+
+      it('should not call unlink or execFile', async () => {
+        const manager = new SandboxManager('my-session', '/workspace/project', 'sandbox-exec');
+
+        await manager.start();
+        vi.clearAllMocks();
+
+        await manager.stop();
+
+        expect(mockUnlink).not.toHaveBeenCalled();
         expect(mockExecFile).not.toHaveBeenCalled();
       });
 
       it('should be a no-op if stop() is called before start()', async () => {
         const manager = new SandboxManager('my-session', '/workspace/project', 'sandbox-exec');
 
-        // Do NOT call start() — sbProfilePath is null
+        // Do NOT call start() — sbProfileDir is null
         await manager.stop();
 
-        expect(mockUnlink).not.toHaveBeenCalled();
+        expect(mockRm).not.toHaveBeenCalled();
         expect(mockExecFile).not.toHaveBeenCalled();
       });
     });
 
     describe('bwrap backend', () => {
-      it('should be a no-op (no execFile calls, no unlink calls)', async () => {
+      it('should be a no-op (no execFile calls, no rm calls)', async () => {
         const manager = new SandboxManager('my-session', '/workspace/project', 'bwrap');
 
         await manager.start();
@@ -1109,7 +1520,7 @@ describe('SandboxManager', () => {
         await manager.stop();
 
         expect(mockExecFile).not.toHaveBeenCalled();
-        expect(mockUnlink).not.toHaveBeenCalled();
+        expect(mockRm).not.toHaveBeenCalled();
       });
 
       it('should resolve without throwing', async () => {
@@ -1128,6 +1539,11 @@ describe('SandboxManager', () => {
     it('should return "docker" for docker backend', () => {
       const manager = new SandboxManager('s', '/w', 'docker');
       expect(manager.getBackend()).toBe('docker');
+    });
+
+    it('should return "podman" for podman backend', () => {
+      const manager = new SandboxManager('s', '/w', 'podman');
+      expect(manager.getBackend()).toBe('podman');
     });
 
     it('should return "bwrap" for bwrap backend', () => {
