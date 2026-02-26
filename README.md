@@ -186,6 +186,7 @@ Every command supports `--help` for detailed usage.
 - **Prompt timeout** — configurable timeout for hung Claude processes (default 5 min)
 - **Stale PID detection** — validates registry PIDs on startup, marks dead sessions as crashed
 - **Graceful shutdown** — SIGTERM first, SIGKILL after configurable timeout (default 5s)
+- **Sandbox isolation** — optional `--sandbox` flag wraps sessions in Docker, bwrap (Linux), or sandbox-exec (macOS) with three restriction levels
 - **Real-time output** — streaming response display with timestamps, error highlighting, and memory-bounded buffers
 - **Scriptable** — `--json` flag, proper exit codes (0 success, 1 user error, 2 system error)
 
@@ -364,6 +365,126 @@ tests/
   integration/      TUI integration tests
 ```
 
+## Session Isolation
+
+Each session is an isolated unit — but the degree of isolation depends on whether you use `--sandbox`.
+
+### Default (process-level isolation)
+
+Without any flags, each session gets:
+
+| What's isolated | How |
+|---|---|
+| Conversation context | Unique Claude session UUID (`--session-id` / `--resume`) |
+| Working directory | Separate `cwd` per session (auto-created if needed) |
+| Environment variables | Optional per-session env overrides (from `--env` or template) |
+| Process | Separate PID per prompt execution |
+
+What is **not** isolated by default: filesystem access, network, and user context are shared across all sessions and with the host.
+
+### With `--sandbox` (container-level isolation)
+
+The `--sandbox` flag wraps each `claude` invocation with a platform-native sandbox:
+
+| Platform | Backend | What's isolated |
+|---|---|---|
+| Any | Docker | Full container: filesystem, network, capabilities |
+| Linux | bwrap | Namespace unsharing: filesystem (read-only root, writable workdir), optional network |
+| macOS | sandbox-exec | Filesystem writes: only the session's working directory is writable |
+
+```bash
+agentspawn start my-session --sandbox                        # Auto-detect backend
+agentspawn start my-session --sandbox --sandbox-level strict # Stricter restrictions
+agentspawn start my-session --sandbox --sandbox-memory 512m  # Resource limits (Docker)
+```
+
+Sandbox levels:
+
+| Level | Filesystem | Network | Resource limits |
+|---|---|---|---|
+| `permissive` (default) | Write-restricted | Open | None |
+| `standard` | Write-restricted + credential dirs blocked | Open | Optional |
+| `strict` | Maximum restriction | Blocked | Optional |
+
+> **Note:** `strict` blocks network access, which prevents Claude from calling the Anthropic API. Use it only for offline/local-only workloads.
+
+### Prompt execution workflow
+
+```
+User sends prompt
+       │
+       ▼
+  SessionManager
+  (owns all sessions)
+       │
+  ┌────┴────┬──────────────────────┐
+  │         │                      │
+  ▼         ▼                      ▼
+Session A  Session B  ...      Session N
+cwd:~/api  cwd:~/web           cwd:~/db
+uuid: aaa  uuid: bbb           uuid: nnn
+  │         │                      │
+  │   (one child process per prompt invocation)
+  │         │                      │
+  ▼         ▼                      ▼
+┌─────────────────┐  ┌─────────────────┐
+│  claude --print │  │  claude --print │  ...
+│  --resume aaa   │  │  --resume bbb   │
+│  cwd: ~/api     │  │  cwd: ~/web     │
+│  pid: 1234      │  │  pid: 5678      │
+│  stdio: piped   │  │  stdio: piped   │
+└────────┬────────┘  └────────┬────────┘
+         │                    │
+         └──── stdout ────────┘
+                   │
+                   ▼
+          OutputCapture (EventEmitter)
+                   │
+                   ▼
+             TUI / CLI output
+```
+
+When `--sandbox` is active, the spawn is wrapped before execution:
+
+```
+Without --sandbox               With --sandbox
+
+spawn('claude', args, {         spawn('docker', ['exec', containerId,
+  cwd: '/your/dir',               'claude', ...args], { cwd, stdio })
+  stdio: 'piped',           or
+})                          spawn('bwrap', ['--ro-bind','/',...,
+                                'claude', ...args], { cwd, stdio })
+                            or
+                            spawn('sandbox-exec', ['-f', profile,
+                                'claude', ...args], { cwd, stdio })
+```
+
+### Session Lifecycle
+
+```
+         agentspawn start
+                │
+                ▼
+            STOPPED ──────────────────────────────────────────┐
+                │                                              │
+           startSession()                                      │
+                │                                             stop()
+                ▼                                              │
+            RUNNING ──── sendPrompt() ──> claude --print      │
+                │              │                    │          │
+                │         (output streamed          │          │
+                │          via EventEmitter)        │          │
+                │              └────────────────────┘          │
+                │                                              │
+          (unexpected exit)                                    │
+                │                                              │
+                ▼                                              │
+            CRASHED                                           STOPPED ◄──┘
+
+  PID validated on startup — stale/dead PIDs are auto-marked CRASHED
+  Registry persists to ~/.agentspawn/sessions.json (file-locked)
+```
+
 ## Architecture
 
 Sessions use `claude --print` per prompt instead of persistent child processes. Conversation continuity is maintained via `--session-id` (first prompt) and `--resume` (subsequent prompts) flags. The TUI stays mounted at all times.
@@ -374,17 +495,6 @@ agentspawn start  ──> SessionManager.startSession() ──> Registry.addEntr
 agentspawn stop   ──> SessionManager.stopSession()  ──> Registry.removeEntry()
 agentspawn list   ──> SessionManager.listSessions() ──> in-memory + Registry merge
 agentspawn exec   ──> Session.sendPrompt()          ──> spawn claude --print
-```
-
-### Session Lifecycle
-
-```
-STOPPED ──start()──> RUNNING ──stop()──> STOPPED
-                        │
-                   (unexpected exit)
-                        │
-                        ▼
-                     CRASHED
 ```
 
 ### TUI Modes
