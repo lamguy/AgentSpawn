@@ -17,14 +17,14 @@ describe('SessionCreationDialog', () => {
 
   it('should render the title', () => {
     const { lastFrame } = render(<SessionCreationDialog {...defaults} />);
-    expect(lastFrame()).toContain('INSERT COIN');
+    expect(lastFrame()).toContain('NEW SESSION');
   });
 
   it('should render both field labels', () => {
     const { lastFrame } = render(<SessionCreationDialog {...defaults} />);
     const output = lastFrame() || '';
-    expect(output).toContain('PLAYER NAME:');
-    expect(output).toContain('ARENA:');
+    expect(output).toContain('NAME:');
+    expect(output).toContain('DIR:');
   });
 
   it('should render template field', () => {
@@ -66,7 +66,7 @@ describe('SessionCreationDialog', () => {
     const { lastFrame } = render(
       <SessionCreationDialog {...defaults} isSubmitting={true} />,
     );
-    expect(lastFrame()).toContain('LOADING PLAYER...');
+    expect(lastFrame()).toContain('SPAWNING...');
   });
 
   it('should render footer hints', () => {

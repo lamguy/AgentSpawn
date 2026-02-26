@@ -154,7 +154,7 @@ export function TUIApp({
         <Box marginTop={1}>
           <Text color={ARCADE_COLORS.phosphorGray}>PRESS </Text>
           <Text bold color={ARCADE_COLORS.neonCyan}>q</Text>
-          <Text color={ARCADE_COLORS.phosphorGray}> TO POWER OFF</Text>
+          <Text color={ARCADE_COLORS.phosphorGray}> TO QUIT</Text>
         </Box>
       </Box>
     );
@@ -297,7 +297,7 @@ export function TUIApp({
                 backgroundColor={ARCADE_COLORS.hotPink}
                 color="#000000"
               >
-                {' '}[IN GAME: {state.attachedSessionName}]{' '}
+                {' '}[ONLINE: {state.attachedSessionName}]{' '}
               </Text>
             )}
             {state.splitMode && (
@@ -306,14 +306,14 @@ export function TUIApp({
                 backgroundColor={ARCADE_COLORS.electricPurple}
                 color="#000000"
               >
-                {' '}[VERSUS MODE]{' '}
+                {' '}[SPLIT VIEW]{' '}
               </Text>
             )}
           </Box>
           <Text color={ARCADE_COLORS.arcadeOrange}>
-            PLAYERS: {String(playerCount).padStart(2, '0')}
+            SESSIONS: {String(playerCount).padStart(2, '0')}
             {ARCADE_DECOR.separator}
-            SCORE: {String(totalPrompts).padStart(6, '0')}
+            PROMPTS: {String(totalPrompts).padStart(6, '0')}
           </Text>
         </Box>
       </Box>

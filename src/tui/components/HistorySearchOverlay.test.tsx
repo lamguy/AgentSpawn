@@ -46,14 +46,14 @@ describe('HistorySearchOverlay', () => {
     const { lastFrame } = render(
       <HistorySearchOverlay {...defaultProps({ query: '' })} />,
     );
-    expect(lastFrame()).toContain('TYPE TO SEARCH PAST MOVES');
+    expect(lastFrame()).toContain('TYPE TO SEARCH PAST PROMPTS');
   });
 
   it('should not show "Type to search" when query is non-empty', () => {
     const { lastFrame } = render(
       <HistorySearchOverlay {...defaultProps({ query: 'fix' })} />,
     );
-    expect(lastFrame()).not.toContain('TYPE TO SEARCH PAST MOVES');
+    expect(lastFrame()).not.toContain('TYPE TO SEARCH PAST PROMPTS');
   });
 
   it('should show "No results" when query has no matches', () => {

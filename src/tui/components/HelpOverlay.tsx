@@ -15,19 +15,19 @@ interface ShortcutEntry {
 
 const NAVIGATION_SHORTCUTS: ShortcutEntry[] = [
   { key: 'Up/Down, j/k', description: 'Move selection' },
-  { key: 'Tab',          description: 'Next player' },
-  { key: 'Shift+Tab',    description: 'Previous player' },
-  { key: 'Enter',        description: 'PRESS START (attach)' },
-  { key: 'n',            description: 'INSERT COIN (new player)' },
-  { key: 'x',            description: 'PULL PLUG (stop player)' },
-  { key: ':  or  Ctrl+P',description: 'COMMAND CENTER' },
-  { key: 'q',            description: 'POWER OFF' },
-  { key: 'Ctrl+C',       description: 'POWER OFF' },
+  { key: 'Tab',          description: 'Next session' },
+  { key: 'Shift+Tab',    description: 'Previous session' },
+  { key: 'Enter',        description: 'ATTACH (connect to session)' },
+  { key: 'n',            description: 'NEW SESSION (spawn)' },
+  { key: 'x',            description: 'TERMINATE (stop session)' },
+  { key: ':  or  Ctrl+P',description: 'ACTIONS' },
+  { key: 'q',            description: 'QUIT' },
+  { key: 'Ctrl+C',       description: 'QUIT' },
 ];
 
 const ATTACHED_SHORTCUTS: ShortcutEntry[] = [
-  { key: 'Esc',    description: 'PAUSE GAME (detach)' },
-  { key: 'Enter',  description: 'Send move' },
+  { key: 'Esc',    description: 'DETACH (return to session list)' },
+  { key: 'Enter',  description: 'Send prompt' },
   { key: 'Ctrl+C', description: 'Clear input' },
   { key: 'Ctrl+A', description: 'Move to start of line' },
   { key: 'Ctrl+E', description: 'Move to end of line' },
@@ -35,7 +35,7 @@ const ATTACHED_SHORTCUTS: ShortcutEntry[] = [
 ];
 
 const GLOBAL_SHORTCUTS: ShortcutEntry[] = [
-  { key: '?', description: 'Toggle HOW TO PLAY' },
+  { key: '?', description: 'Toggle HELP' },
 ];
 
 const KEY_COLUMN_WIDTH = 20;
@@ -69,9 +69,9 @@ export function HelpOverlay({ onScroll, onDismiss }: HelpOverlayProps): React.Re
   );
 
   const allSections = [
-    { header: 'SELECT PLAYER MODE', entries: NAVIGATION_SHORTCUTS },
-    { header: 'IN GAME MODE',        entries: ATTACHED_SHORTCUTS },
-    { header: 'UNIVERSAL',           entries: GLOBAL_SHORTCUTS },
+    { header: 'SESSION LIST MODE', entries: NAVIGATION_SHORTCUTS },
+    { header: 'ATTACHED MODE',     entries: ATTACHED_SHORTCUTS },
+    { header: 'UNIVERSAL',         entries: GLOBAL_SHORTCUTS },
   ];
 
   return (
@@ -87,7 +87,7 @@ export function HelpOverlay({ onScroll, onDismiss }: HelpOverlayProps): React.Re
         {/* Title */}
         <Box justifyContent="center" marginBottom={1}>
           <Text bold color={ARCADE_COLORS.acidYellow}>
-            {ARCADE_DECOR.sectionTitle('HOW TO PLAY')}
+            {ARCADE_DECOR.sectionTitle('HELP')}
           </Text>
         </Box>
 

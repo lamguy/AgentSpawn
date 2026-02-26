@@ -88,7 +88,7 @@ export function InputBar({
             )}
             <Text bold color={ARCADE_COLORS.acidYellow}>{'>>'} </Text>
             <BlinkText color={ARCADE_COLORS.acidYellow} bold intervalMs={ARCADE_BLINK.processing}>
-              PROCESSING MOVE...
+              PROCESSING...
             </BlinkText>
           </Box>
         </Box>
@@ -112,7 +112,7 @@ export function InputBar({
           {isEmpty ? (
             <>
               <Text inverse> </Text>
-              <Text color={ARCADE_COLORS.phosphorGray}>Type your move...</Text>
+              <Text color={ARCADE_COLORS.phosphorGray}>Type your prompt...</Text>
             </>
           ) : (
             <>

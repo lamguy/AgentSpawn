@@ -73,7 +73,7 @@ export function HistorySearchOverlay({
         {/* Empty / no-results states */}
         {!hasResults && query.length === 0 && (
           <Box justifyContent="center" paddingY={1}>
-            <Text color={ARCADE_COLORS.phosphorGray}>TYPE TO SEARCH PAST MOVES</Text>
+            <Text color={ARCADE_COLORS.phosphorGray}>TYPE TO SEARCH PAST PROMPTS</Text>
           </Box>
         )}
 

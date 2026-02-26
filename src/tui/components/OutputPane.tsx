@@ -35,11 +35,11 @@ export function OutputPane({
     return (
       <Box flexDirection="column" width="100%">
         <Box marginBottom={1}>
-          <Text bold color={ARCADE_COLORS.acidYellow}>GAME FEED</Text>
+          <Text bold color={ARCADE_COLORS.acidYellow}>OUTPUT</Text>
         </Box>
         <Box flexDirection="column" paddingX={2} paddingY={1}>
-          <Text color={ARCADE_COLORS.phosphorGray}>SELECT A PLAYER TO VIEW GAME FEED</Text>
-          <Text color={ARCADE_COLORS.phosphorGray}>or press n to INSERT COIN</Text>
+          <Text color={ARCADE_COLORS.phosphorGray}>SELECT A SESSION TO VIEW OUTPUT</Text>
+          <Text color={ARCADE_COLORS.phosphorGray}>or press n to spawn a new session</Text>
         </Box>
       </Box>
     );
@@ -60,7 +60,7 @@ export function OutputPane({
       {/* Pane header */}
       <Box flexDirection="row" justifyContent="space-between" marginBottom={0}>
         <Box flexDirection="row">
-          <Text bold color={ARCADE_COLORS.acidYellow}>GAME FEED: </Text>
+          <Text bold color={ARCADE_COLORS.acidYellow}>OUTPUT: </Text>
           <Text bold color={ARCADE_COLORS.neonCyan}>{session.name}</Text>
           <Text>  </Text>
           <Text bold color={status.color}>{status.symbol}</Text>
@@ -80,7 +80,7 @@ export function OutputPane({
             <Text color={ARCADE_COLORS.phosphorGray}>
               {session.name}{ARCADE_DECOR.separator}NO OUTPUT YET
             </Text>
-            <Text color={ARCADE_COLORS.phosphorGray}>Press Enter to attach and send moves</Text>
+            <Text color={ARCADE_COLORS.phosphorGray}>Press Enter to attach and send prompts</Text>
           </Box>
         ) : (
           visibleLines.map((line, index) => (
