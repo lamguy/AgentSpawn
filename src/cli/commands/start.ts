@@ -22,12 +22,11 @@ export function registerStartCommand(
     .option('--max-retries <number>', 'Maximum restart attempts (default: 3)', '3')
     .option('--retry-backoff <ms>', 'Initial backoff delay in milliseconds (default: 1000)', '1000')
     .option('--tag <tag>', 'Add a tag to this session (repeatable)', (val: string, acc: string[]) => [...acc, val], [] as string[])
-    .option('-S, --sandbox', 'Run session in a sandbox (Docker, bwrap on Linux, or sandbox-exec on macOS)')
     .option('--sandbox-level <level>', 'Isolation level: permissive (default), standard, strict')
     .option('--sandbox-image <image>', 'Custom Docker image for sandbox (e.g. debian@sha256:...)')
     .option('--sandbox-memory <limit>', 'Memory limit for sandbox container (e.g. 512m)')
     .option('--sandbox-cpu <cores>', 'CPU limit for sandbox container (e.g. 0.5)')
-    .action(async (name: string, options: { dir?: string; permissionMode?: string; template?: string; maxRetries: string; retryBackoff: string; tag: string[]; sandbox?: boolean; sandboxLevel?: string; sandboxImage?: string; sandboxMemory?: string; sandboxCpu?: string }) => {
+    .action(async (name: string, options: { dir?: string; permissionMode?: string; template?: string; maxRetries: string; retryBackoff: string; tag: string[]; sandboxLevel?: string; sandboxImage?: string; sandboxMemory?: string; sandboxCpu?: string }) => {
       try {
         let workingDirectory = options.dir ? path.resolve(options.dir) : undefined;
         let permissionMode = options.permissionMode;
@@ -54,10 +53,6 @@ export function registerStartCommand(
             }
             if (template.restartPolicy) {
               templateRestartPolicy = template.restartPolicy;
-            }
-            if (!options.sandbox && template.sandboxed) {
-              // Template enables sandbox by default; CLI --sandbox overrides
-              options.sandbox = template.sandboxed;
             }
             if (!options.sandboxLevel && template.sandboxLevel) {
               options.sandboxLevel = template.sandboxLevel;
@@ -122,7 +117,6 @@ export function registerStartCommand(
           env,
           restartPolicy,
           tags: options.tag.length > 0 ? options.tag : undefined,
-          sandboxed: options.sandbox ?? false,
           sandboxLevel: options.sandboxLevel as SandboxLevel | undefined,
           sandboxImage: options.sandboxImage,
           sandboxMemoryLimit: options.sandboxMemory,

@@ -23,7 +23,7 @@ export function formatSessionOutput(sessionName: string, line: string): string {
 
 export function formatStatusLine(info: SessionInfo): string {
   const coloredState = `${colorForState(info.state)}[${info.state}]${RESET}`;
-  const sandboxBadge = info.sandboxed && info.sandboxBackend
+  const sandboxBadge = info.sandboxBackend
     ? ` ${BOLD}[sandbox: ${info.sandboxBackend}${info.sandboxLevel && info.sandboxLevel !== 'permissive' ? '/' + info.sandboxLevel : ''}]${RESET}`
     : '';
   return `${info.name} ${coloredState} ${info.workingDirectory} (pid: ${info.pid})${sandboxBadge}`;

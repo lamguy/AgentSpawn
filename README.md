@@ -186,7 +186,7 @@ Every command supports `--help` for detailed usage.
 - **Prompt timeout** — configurable timeout for hung Claude processes (default 5 min)
 - **Stale PID detection** — validates registry PIDs on startup, marks dead sessions as crashed
 - **Graceful shutdown** — SIGTERM first, SIGKILL after configurable timeout (default 5s)
-- **Sandbox isolation** — optional `--sandbox` flag wraps sessions in Docker, bwrap (Linux), or sandbox-exec (macOS) with three restriction levels
+- **Mandatory sandbox isolation** — every session runs in Docker, bwrap (Linux), or sandbox-exec (macOS) with three restriction levels; no unsandboxed execution
 - **Real-time output** — streaming response display with timestamps, error highlighting, and memory-bounded buffers
 - **Scriptable** — `--json` flag, proper exit codes (0 success, 1 user error, 2 system error)
 
@@ -367,24 +367,23 @@ tests/
 
 ## Session Isolation
 
-Each session is an isolated unit — but the degree of isolation depends on whether you use `--sandbox`.
+Every session runs in a sandbox. Isolation is not optional — AgentSpawn requires a sandbox backend to start any session and will fail with an error if none is available.
 
-### Default (process-level isolation)
+### Always-on isolation
 
-Without any flags, each session gets:
+Each session gets:
 
 | What's isolated | How |
 |---|---|
 | Conversation context | Unique Claude session UUID (`--session-id` / `--resume`) |
 | Working directory | Separate `cwd` per session (auto-created if needed) |
 | Environment variables | Optional per-session env overrides (from `--env` or template) |
-| Process | Separate PID per prompt execution |
+| Filesystem writes | Sandbox restricts writes to the session's working directory |
+| Process | Separate PID per prompt execution, wrapped by sandbox backend |
 
-What is **not** isolated by default: filesystem access, network, and user context are shared across all sessions and with the host.
+### Sandbox backends
 
-### With `--sandbox` (container-level isolation)
-
-The `--sandbox` flag wraps each `claude` invocation with a platform-native sandbox:
+AgentSpawn auto-detects the available backend. Install at least one:
 
 | Platform | Backend | What's isolated |
 |---|---|---|
@@ -392,13 +391,13 @@ The `--sandbox` flag wraps each `claude` invocation with a platform-native sandb
 | Linux | bwrap | Namespace unsharing: filesystem (read-only root, writable workdir), optional network |
 | macOS | sandbox-exec | Filesystem writes: only the session's working directory is writable |
 
-```bash
-agentspawn start my-session --sandbox                        # Auto-detect backend
-agentspawn start my-session --sandbox --sandbox-level strict # Stricter restrictions
-agentspawn start my-session --sandbox --sandbox-memory 512m  # Resource limits (Docker)
-```
+### Sandbox levels
 
-Sandbox levels:
+```bash
+agentspawn start my-session                              # Auto-detect backend, permissive level
+agentspawn start my-session --sandbox-level strict       # Stricter restrictions
+agentspawn start my-session --sandbox-memory 512m        # Resource limits (Docker)
+```
 
 | Level | Filesystem | Network | Resource limits |
 |---|---|---|---|
@@ -424,7 +423,7 @@ Session A  Session B  ...      Session N
 cwd:~/api  cwd:~/web           cwd:~/db
 uuid: aaa  uuid: bbb           uuid: nnn
   │         │                      │
-  │   (one child process per prompt invocation)
+  │   (one child process per prompt invocation, wrapped by sandbox)
   │         │                      │
   ▼         ▼                      ▼
 ┌─────────────────┐  ┌─────────────────┐
@@ -444,19 +443,17 @@ uuid: aaa  uuid: bbb           uuid: nnn
              TUI / CLI output
 ```
 
-When `--sandbox` is active, the spawn is wrapped before execution:
+Each spawn is always wrapped by the sandbox backend:
 
 ```
-Without --sandbox               With --sandbox
-
-spawn('claude', args, {         spawn('docker', ['exec', containerId,
-  cwd: '/your/dir',               'claude', ...args], { cwd, stdio })
-  stdio: 'piped',           or
-})                          spawn('bwrap', ['--ro-bind','/',...,
-                                'claude', ...args], { cwd, stdio })
-                            or
-                            spawn('sandbox-exec', ['-f', profile,
-                                'claude', ...args], { cwd, stdio })
+spawn('docker', ['exec', containerId,
+    'claude', ...args], { cwd, stdio })
+or
+spawn('bwrap', ['--ro-bind','/',...,
+    'claude', ...args], { cwd, stdio })
+or
+spawn('sandbox-exec', ['-f', profile,
+    'claude', ...args], { cwd, stdio })
 ```
 
 ### Session Lifecycle

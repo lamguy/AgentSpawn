@@ -174,7 +174,7 @@ export class TunnelError extends AgentSpawnError {
 export class SandboxNotAvailableError extends AgentSpawnError {
   constructor() {
     super(
-      'No sandbox backend available. Install Docker (all platforms) or bubblewrap/bwrap (Linux).',
+      'Sandbox isolation is required but no backend is available. Install Docker (all platforms) or bubblewrap/bwrap (Linux only).',
       'SANDBOX_NOT_AVAILABLE',
     );
     this.name = 'SandboxNotAvailableError';

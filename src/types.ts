@@ -54,7 +54,6 @@ export interface SessionConfig {
   promptTimeoutMs?: number;
   restartPolicy?: RestartPolicy;
   tags?: string[];
-  sandboxed?: boolean;
   sandboxBackend?: SandboxBackend;
   sandboxLevel?: SandboxLevel;
   sandboxImage?: string;
@@ -151,7 +150,6 @@ export interface TemplateEntry {
   env?: Record<string, string>;
   restartPolicy?: RestartPolicy;
   createdAt: string;
-  sandboxed?: boolean;
   sandboxLevel?: SandboxLevel;
   sandboxImage?: string;
 }

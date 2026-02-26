@@ -88,8 +88,8 @@ export function registerSandboxCommand(program: Command, manager: SessionManager
         process.exitCode = 1;
         return;
       }
-      if (!info.sandboxed || !info.sandboxBackend) {
-        console.error(`Error: Session "${sessionName}" is not sandboxed`);
+      if (!info.sandboxBackend) {
+        console.error(`Error: Session "${sessionName}" has no active sandbox backend`);
         process.exitCode = 1;
         return;
       }
