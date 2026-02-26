@@ -186,7 +186,7 @@ Every command supports `--help` for detailed usage.
 - **Prompt timeout** — configurable timeout for hung Claude processes (default 5 min)
 - **Stale PID detection** — validates registry PIDs on startup, marks dead sessions as crashed
 - **Graceful shutdown** — SIGTERM first, SIGKILL after configurable timeout (default 5s)
-- **Mandatory sandbox isolation** — every session runs in Docker, bwrap (Linux), or sandbox-exec (macOS) with three restriction levels; no unsandboxed execution
+- **Mandatory sandbox isolation** — every session runs in sandbox-exec (macOS), bwrap (Linux), Podman, or Docker with three restriction levels; native-first auto-detection, no unsandboxed execution
 - **Real-time output** — streaming response display with timestamps, error highlighting, and memory-bounded buffers
 - **Scriptable** — `--json` flag, proper exit codes (0 success, 1 user error, 2 system error)
 
@@ -383,20 +383,31 @@ Each session gets:
 
 ### Sandbox backends
 
-AgentSpawn auto-detects the available backend. Install at least one:
+AgentSpawn auto-detects the best available backend using a native-first strategy. The platform's built-in sandbox is always preferred over containers:
 
-| Platform | Backend | What's isolated |
-|---|---|---|
-| Any | Docker | Full container: filesystem, network, capabilities |
-| Linux | bwrap | Namespace unsharing: filesystem (read-only root, writable workdir), optional network |
-| macOS | sandbox-exec | Filesystem writes: only the session's working directory is writable |
+| Priority | Platform | Backend | What's isolated |
+|---|---|---|---|
+| 1 (macOS) | macOS | sandbox-exec | Filesystem writes: only the session's working directory is writable. Built-in, zero overhead. |
+| 1 (Linux) | Linux | bwrap | Namespace unsharing: filesystem (read-only root, writable workdir), optional network. |
+| 2 | Any | Podman | Full container: filesystem, network, capabilities. Daemonless and rootless by default. |
+| 3 | Any | Docker | Full container: filesystem, network, capabilities. Requires a running daemon. |
+
+Detection stops at the first available backend. On a typical Mac, `sandbox-exec` is found immediately — no container overhead. Override with `--sandbox-backend` to force a specific backend.
+
+> **Note:** `sandbox-exec` is deprecated by Apple as of macOS 26.3 but remains fully functional on all current macOS versions.
+
+```bash
+agentspawn start my-session                                       # Auto-detect (native-first)
+agentspawn start my-session --sandbox-backend podman              # Force Podman
+agentspawn start my-session --sandbox-backend docker              # Force Docker
+```
 
 ### Sandbox levels
 
 ```bash
 agentspawn start my-session                              # Auto-detect backend, permissive level
 agentspawn start my-session --sandbox-level strict       # Stricter restrictions
-agentspawn start my-session --sandbox-memory 512m        # Resource limits (Docker)
+agentspawn start my-session --sandbox-memory 512m        # Resource limits (Podman/Docker)
 ```
 
 | Level | Filesystem | Network | Resource limits |
@@ -446,13 +457,16 @@ uuid: aaa  uuid: bbb           uuid: nnn
 Each spawn is always wrapped by the sandbox backend:
 
 ```
-spawn('docker', ['exec', containerId,
+spawn('sandbox-exec', ['-f', profile,
     'claude', ...args], { cwd, stdio })
 or
 spawn('bwrap', ['--ro-bind','/',...,
     'claude', ...args], { cwd, stdio })
 or
-spawn('sandbox-exec', ['-f', profile,
+spawn('podman', ['exec', containerId,
+    'claude', ...args], { cwd, stdio })
+or
+spawn('docker', ['exec', containerId,
     'claude', ...args], { cwd, stdio })
 ```
 
