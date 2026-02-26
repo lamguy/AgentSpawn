@@ -110,7 +110,9 @@ export class Session extends EventEmitter {
       const { cmd, args: spawnArgs } = this.sandbox
         ? this.sandbox.buildSpawnArgs(args)
         : { cmd: 'claude', args };
-      this.emit('system', `Spawning: ${cmd} ${spawnArgs.join(' ')}`);
+      const shortSessionId = this.claudeSessionId.slice(0, 8);
+      const permMode = this.config.permissionMode ?? 'default';
+      this.emit('system', `Spawning claude [${this.sandbox?.getBackend() ?? 'native'}] session=${shortSessionId} mode=${permMode}`);
       const child = spawn(cmd, spawnArgs, {
         cwd: this.config.workingDirectory,
         env: { ...process.env, ...this.config.env },
@@ -206,7 +208,6 @@ export class Session extends EventEmitter {
           this.emit('promptComplete', response);
           resolve(response);
         } else {
-          this.emit('system', `Exited with code ${code}, signal ${signal ?? 'none'}`);
           // Crash detected — classify exit code and emit crashed event
           const { classification, reason } = classifyExitCode(code, signal);
 

@@ -793,26 +793,7 @@ describe('Session', () => {
 
       // At least one system message should contain spawn command text
       expect(systemMessages.length).toBeGreaterThan(0);
-      expect(systemMessages.some((m) => m.includes('Spawning:'))).toBe(true);
-    });
-
-    it('sendPrompt() emits a "system" event containing the exit code on non-zero exit', async () => {
-      const mockChild = createMockChild(42);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      mockedSpawn.mockReturnValue(mockChild as any);
-
-      await session.start();
-
-      const systemMessages: string[] = [];
-      session.on('system', (msg: string) => systemMessages.push(msg));
-
-      const p = session.sendPrompt('crash me');
-      mockChild.emit('close', 1, null);
-
-      await p.catch(() => {});
-
-      // A system event should report the exit code
-      expect(systemMessages.some((m) => m.includes('1'))).toBe(true);
+      expect(systemMessages.some((m) => m.includes('Spawning claude'))).toBe(true);
     });
 
     it('forceKill() calls SIGKILL on the active process', async () => {
