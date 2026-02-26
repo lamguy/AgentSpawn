@@ -250,6 +250,45 @@ describe('handleNavigationKeypress', () => {
     });
   });
 
+  describe('"X" key (force-kill session)', () => {
+    it('should return force-kill-session action immediately for a crashed session (no confirmation)', () => {
+      const state = createMockState(['crashed-session']);
+      state.sessions[0].state = SessionState.Crashed;
+      state.selectedSessionName = 'crashed-session';
+
+      const result = handleNavigationKeypress(state, 'X');
+
+      const { action } = expectAction(result);
+      expect(action.kind).toBe('force-kill-session');
+      if (action.kind === 'force-kill-session') {
+        expect(action.sessionName).toBe('crashed-session');
+      }
+    });
+
+    it('should push confirmation overlay for a running session before force-killing', () => {
+      const state = createMockState(['running-session']);
+      // sessions in createMockState default to SessionState.Running
+      state.selectedSessionName = 'running-session';
+
+      const result = handleNavigationKeypress(state, 'X');
+
+      const s = expectState(result);
+      expect(s.overlayStack).toHaveLength(1);
+      expect(s.overlayStack[0].kind).toBe('confirmation');
+    });
+
+    it('should be a no-op when no session is selected', () => {
+      const state = createMockState(['a']);
+      state.selectedSessionName = null;
+
+      const result = handleNavigationKeypress(state, 'X');
+
+      const s = expectState(result);
+      expect(s.overlayStack).toHaveLength(0);
+      expect(s.selectedSessionName).toBeNull();
+    });
+  });
+
   describe('Ctrl+A (action menu)', () => {
     it('should push action-menu overlay', () => {
       const state = createMockState(['a']);

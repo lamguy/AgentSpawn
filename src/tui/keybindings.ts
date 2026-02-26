@@ -10,6 +10,7 @@ import type {
   ActionMenuItem,
   ConfirmableAction,
 } from './types.js';
+import { SessionState } from '../types.js';
 import {
   topOverlay,
   popOverlay,
@@ -42,6 +43,7 @@ export const KEY_CODES = {
   LOWERCASE_N: 'n',
   LOWERCASE_V: 'v',
   LOWERCASE_X: 'x',
+  UPPERCASE_X: 'X',
   LOWERCASE_Y: 'y',
   QUESTION_MARK: '?',
   CTRL_R: '\x12',
@@ -247,6 +249,30 @@ export function handleNavigationKeypress(
           kind: 'stop-session',
           sessionName: state.selectedSessionName,
         },
+      }),
+    );
+  }
+
+  // Force-kill with uppercase X
+  if (key === KEY_CODES.UPPERCASE_X) {
+    if (!state.selectedSessionName) return stateResult(state);
+    const selectedSession = state.sessions.find(
+      (s) => s.name === state.selectedSessionName,
+    );
+    if (selectedSession?.state === SessionState.Crashed) {
+      // Skip confirmation for already-dead sessions
+      return actionResult(state, {
+        kind: 'force-kill-session',
+        sessionName: state.selectedSessionName,
+      });
+    }
+    // Running sessions get a confirmation
+    return stateResult(
+      pushOverlay(state, {
+        kind: 'confirmation',
+        title: `Force-kill "${state.selectedSessionName}"?`,
+        message: 'Sends SIGKILL immediately. No graceful shutdown.',
+        action: { kind: 'force-kill-session', sessionName: state.selectedSessionName },
       }),
     );
   }
@@ -604,6 +630,11 @@ function confirmableActionToResult(
     case 'stop-session':
       return actionResult(state, {
         kind: 'stop-session',
+        sessionName: action.sessionName,
+      });
+    case 'force-kill-session':
+      return actionResult(state, {
+        kind: 'force-kill-session',
         sessionName: action.sessionName,
       });
     case 'restart-session':

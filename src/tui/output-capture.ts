@@ -6,7 +6,7 @@ import type { OutputLine, OutputCaptureConfig } from './types.js';
  * OutputCapture — Captures and buffers output from multiple sessions.
  *
  * Listens to Session EventEmitter events ('promptStart', 'data', 'promptComplete',
- * 'promptError') and maintains a circular buffer of output lines per session.
+ * 'promptError', 'system') and maintains a circular buffer of output lines per session.
  */
 export class OutputCapture {
   private readonly buffers: Map<string, OutputLine[]> = new Map();
@@ -39,7 +39,7 @@ export class OutputCapture {
   /**
    * Start capturing output from a session via its EventEmitter events.
    *
-   * Listens to 'promptStart', 'data', 'promptComplete', 'promptError', and 'stderr'.
+   * Listens to 'promptStart', 'data', 'promptComplete', 'promptError', 'stderr', and 'system'.
    */
   captureSession(sessionName: string, session: Session): void {
     if (this.listeners.has(sessionName)) {
@@ -72,11 +72,16 @@ export class OutputCapture {
       this.appendLine(sessionName, chunk.trim(), true);
     };
 
+    const onSystem = (message: string): void => {
+      this.appendLine(sessionName, message, false, true);
+    };
+
     session.on('promptStart', onPromptStart);
     session.on('data', onData);
     session.on('promptComplete', onPromptComplete);
     session.on('promptError', onPromptError);
     session.on('stderr', onStderr);
+    session.on('system', onSystem);
 
     // Store cleanup functions
     const cleanups = [
@@ -85,6 +90,7 @@ export class OutputCapture {
       () => session.removeListener('promptComplete', onPromptComplete),
       () => session.removeListener('promptError', onPromptError),
       () => session.removeListener('stderr', onStderr),
+      () => session.removeListener('system', onSystem),
     ];
     this.listeners.set(sessionName, cleanups);
   }
@@ -105,7 +111,7 @@ export class OutputCapture {
   /**
    * Directly append a line of text to a session's output buffer.
    */
-  appendLine(sessionName: string, text: string, isError: boolean): void {
+  appendLine(sessionName: string, text: string, isError: boolean, isSystem: boolean = false): void {
     const buffer = this.buffers.get(sessionName) ?? [];
 
     // Truncate long lines
@@ -118,6 +124,7 @@ export class OutputCapture {
       text: finalText,
       timestamp: new Date(),
       isError,
+      isSystem,
     });
     this.totalLineCount++;
 

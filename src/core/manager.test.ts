@@ -22,7 +22,10 @@ vi.mock('./sandbox.js', () => {
       async start() { /* no-op */ }
       async stop() { /* no-op */ }
       getBackend() { return 'sandbox-exec' as const; }
+      getBackendName() { return 'sandbox-exec' as const; }
       getLevel() { return 'permissive' as const; }
+      getProfilePath() { return null; }
+      getContainerId() { return null; }
       buildSpawnArgs(args: string[]) { return { cmd: 'claude', args }; }
       buildArbitrarySpawnArgs(executable: string, args: string[]) { return { cmd: executable, args }; }
     },
@@ -449,6 +452,33 @@ describe('SessionManager', () => {
 
     mockChild.emit('close', 0);
     await p;
+  });
+
+  describe('forceKill()', () => {
+    it('should throw SessionNotFoundError when session does not exist', async () => {
+      await manager.init();
+
+      expect(() => manager.forceKill('nonexistent')).toThrow(SessionNotFoundError);
+      expect(() => manager.forceKill('nonexistent')).toThrow('Session not found: nonexistent');
+    });
+
+    it('should call session.forceKill() which sends SIGKILL to the active process', async () => {
+      await manager.init();
+      const session = await manager.startSession({ name: 'kill-me', workingDirectory: '/tmp/kill' });
+
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      // Start a prompt (don't resolve it) so there is an active process
+      session.sendPrompt('in progress').catch(() => {});
+
+      expect(session.isProcessing()).toBe(true);
+
+      manager.forceKill('kill-me');
+
+      expect(mockChild.kill).toHaveBeenCalledWith('SIGKILL');
+    });
   });
 
   describe('refreshRegistry()', () => {

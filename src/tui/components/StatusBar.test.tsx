@@ -131,10 +131,10 @@ describe('StatusBar', () => {
     const state = makeState();
     const { lastFrame } = render(<StatusBar state={state} />, RENDER_OPTS);
     const output = lastFrame() || '';
-    // Tab key may be truncated by ink at 100-col limit; check action words instead
-    expect(output).toContain('next');   // Tab → next
     expect(output).toContain('Enter');
     expect(output).toContain('ATTACH');
+    expect(output).toContain('STOP');
+    expect(output).toContain('KILL');
     expect(output).toContain('HELP');
   });
 

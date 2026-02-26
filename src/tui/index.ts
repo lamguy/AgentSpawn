@@ -280,6 +280,19 @@ export class TUI {
       case 'stop-session':
         this.handleStopSession(action.sessionName);
         break;
+      case 'force-kill-session': {
+        try {
+          this.manager.forceKill(action.sessionName);
+          this.setStatusMessage(`Session "${action.sessionName}" force-killed`, 'success');
+        } catch (err) {
+          this.setStatusMessage(
+            err instanceof Error ? err.message : `Failed to kill "${action.sessionName}"`,
+            'error',
+          );
+        }
+        this.forceRerender();
+        break;
+      }
       case 'restart-session':
         this.handleRestartSession(action.sessionName);
         break;

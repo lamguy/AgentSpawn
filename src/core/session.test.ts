@@ -774,6 +774,65 @@ describe('Session', () => {
     });
   });
 
+  describe('system events', () => {
+    it('sendPrompt() emits a "system" event containing the spawn command text', async () => {
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      await session.start();
+
+      const systemMessages: string[] = [];
+      session.on('system', (msg: string) => systemMessages.push(msg));
+
+      const p = session.sendPrompt('hello');
+
+      mockChild.stdout.emit('data', assistantEvent('world'));
+      mockChild.emit('close', 0);
+      await p;
+
+      // At least one system message should contain spawn command text
+      expect(systemMessages.length).toBeGreaterThan(0);
+      expect(systemMessages.some((m) => m.includes('Spawning:'))).toBe(true);
+    });
+
+    it('sendPrompt() emits a "system" event containing the exit code on non-zero exit', async () => {
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      await session.start();
+
+      const systemMessages: string[] = [];
+      session.on('system', (msg: string) => systemMessages.push(msg));
+
+      const p = session.sendPrompt('crash me');
+      mockChild.emit('close', 1, null);
+
+      await p.catch(() => {});
+
+      // A system event should report the exit code
+      expect(systemMessages.some((m) => m.includes('1'))).toBe(true);
+    });
+
+    it('forceKill() calls SIGKILL on the active process', async () => {
+      const mockChild = createMockChild(42);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockedSpawn.mockReturnValue(mockChild as any);
+
+      await session.start();
+
+      // Start a prompt (don't resolve it) to establish an active process
+      session.sendPrompt('long prompt').catch(() => {});
+
+      expect(session.isProcessing()).toBe(true);
+
+      session.forceKill();
+
+      expect(mockChild.kill).toHaveBeenCalledWith('SIGKILL');
+    });
+  });
+
   describe('crash detection', () => {
     it('should emit crashed event on non-zero exit code', async () => {
       await session.start();

@@ -95,9 +95,10 @@ function getShortcuts(
     case 'navigation':
     default:
       return [
-        { key: 'Tab', action: 'next' },
         { key: 'Enter', action: 'ATTACH' },
         { key: 'n', action: 'NEW' },
+        { key: 'x', action: 'STOP' },
+        { key: 'X', action: 'KILL' },
         { key: '?', action: 'HELP' },
         { key: ':', action: 'CMD' },
       ];

@@ -96,8 +96,11 @@ export class SessionManager extends EventEmitter {
     if (!backend) throw new SandboxNotAvailableError();
 
     let sandbox = new SandboxManager(config.name, config.workingDirectory, backend, sandboxOptions);
+    let pendingSystemMessages: string[] = [];
     try {
+      pendingSystemMessages.push(`Starting ${sandbox.getBackend()} sandbox...`);
       await sandbox.start();
+      pendingSystemMessages.push(`Sandbox ready (${sandbox.getBackend()}, level: ${sandbox.getLevel()})`);
     } catch (e) {
       if (backend === 'docker') {
         // Docker failed — try platform-native backend as fallback
@@ -109,7 +112,9 @@ export class SessionManager extends EventEmitter {
           backend = fallback;
           sandbox = new SandboxManager(config.name, config.workingDirectory, fallback, sandboxOptions);
           try {
+            pendingSystemMessages = [`Starting ${sandbox.getBackend()} sandbox...`];
             await sandbox.start();
+            pendingSystemMessages.push(`Sandbox ready (${sandbox.getBackend()}, level: ${sandbox.getLevel()})`);
           } catch (e2) {
             throw new SandboxStartError(config.name, (e2 as Error).message);
           }
@@ -122,6 +127,9 @@ export class SessionManager extends EventEmitter {
     }
     config = { ...config, sandboxBackend: backend };
     const session = new Session(config, this.options?.shutdownTimeoutMs, claudeSessionId, promptCount, retryCount, sandbox);
+    for (const msg of pendingSystemMessages) {
+      session.emit('system', msg);
+    }
     await session.start();
     logger.info(`Session "${config.name}" started in ${config.workingDirectory}`);
 
@@ -210,6 +218,14 @@ export class SessionManager extends EventEmitter {
 
     await this.registry.removeEntry(name);
     this.registryEntries.delete(name);
+  }
+
+  forceKill(sessionName: string): void {
+    const session = this.sessions.get(sessionName);
+    if (!session) {
+      throw new SessionNotFoundError(sessionName);
+    }
+    session.forceKill();
   }
 
   async stopAll(): Promise<void> {

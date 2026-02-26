@@ -4,6 +4,7 @@ import type { HistoryStore } from '../../core/history.js';
 import type { TemplateManager } from '../../core/template.js';
 import { Router } from '../../io/router.js';
 import { launchTUI } from '../../tui/index.js';
+import { logger } from '../../utils/logger.js';
 
 export function registerTUICommand(
   program: Command,
@@ -18,6 +19,7 @@ export function registerTUICommand(
     .option('-s, --session <name>', 'Initially select a specific session')
     .action(async (options: { session?: string }) => {
       try {
+        logger.setSilent(true);
         const tui = launchTUI(manager, router, {
           initialSession: options.session,
           historyStore,

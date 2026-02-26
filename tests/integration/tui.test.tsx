@@ -98,7 +98,7 @@ describe('TUI Integration Tests', () => {
       expect(output).toContain('SESSIONS:');
 
       // Verify status bar shortcuts are present
-      expect(output).toContain('Tab');
+      expect(output).toContain('STOP');
 
       // Verify session list shows empty state
       expect(output).toContain('PRESS [N] TO SPAWN');
@@ -395,7 +395,7 @@ describe('TUI Integration Tests', () => {
 
       const output = lastFrame() || '';
       expect(output).toContain('session-1');
-      expect(output).toContain('Tab');
+      expect(output).toContain('STOP');
       expect(output).toContain('Enter');
     });
 
@@ -414,10 +414,10 @@ describe('TUI Integration Tests', () => {
       const output = lastFrame() || '';
 
       // Verify navigation shortcuts are visible
-      expect(output).toContain('Tab');
-      expect(output).toContain('next');
       expect(output).toContain('Enter');
       expect(output).toContain('ATTACH');
+      expect(output).toContain('STOP');
+      expect(output).toContain('KILL');
       expect(output).toContain('HELP');
     });
 
@@ -512,10 +512,10 @@ describe('TUI Integration Tests', () => {
       const output = lastFrame() || '';
 
       // Verify keyboard shortcuts are displayed
-      expect(output).toContain('Tab');
-      expect(output).toContain('next');
       expect(output).toContain('Enter');
       expect(output).toContain('ATTACH');
+      expect(output).toContain('STOP');
+      expect(output).toContain('KILL');
       expect(output).toContain('HELP');
     });
 
@@ -839,7 +839,7 @@ describe('TUI Integration Tests', () => {
       expect(output).toContain('session-1');
       expect(output).toContain('session-2');
       expect(output).toContain('session-3');
-      expect(output).toContain('Tab');
+      expect(output).toContain('STOP');
       expect(output).toContain('Enter');
     });
 

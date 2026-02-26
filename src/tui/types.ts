@@ -79,6 +79,7 @@ export interface HistorySearchOverlayState {
  */
 export type ConfirmableAction =
   | { kind: 'stop-session'; sessionName: string }
+  | { kind: 'force-kill-session'; sessionName: string }
   | { kind: 'restart-session'; sessionName: string }
   | { kind: 'stop-all' };
 
@@ -101,6 +102,7 @@ export type TUIAction =
   | { kind: 'create-session'; name: string; directory: string; permissionMode: string }
   | { kind: 'create-session-from-template'; name: string; templateName: string; directory: string; permissionMode: string }
   | { kind: 'stop-session'; sessionName: string }
+  | { kind: 'force-kill-session'; sessionName: string }
   | { kind: 'restart-session'; sessionName: string }
   | { kind: 'stop-all' }
   | { kind: 'send-prompt'; sessionName: string; prompt: string }
@@ -204,6 +206,8 @@ export interface OutputLine {
   timestamp: Date;
   /** Whether this came from stderr (vs stdout) */
   isError: boolean;
+  /** Whether this is a system-generated message (not session output) */
+  isSystem?: boolean;
 }
 
 /**

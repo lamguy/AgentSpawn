@@ -110,6 +110,7 @@ export class Session extends EventEmitter {
       const { cmd, args: spawnArgs } = this.sandbox
         ? this.sandbox.buildSpawnArgs(args)
         : { cmd: 'claude', args };
+      this.emit('system', `Spawning: ${cmd} ${spawnArgs.join(' ')}`);
       const child = spawn(cmd, spawnArgs, {
         cwd: this.config.workingDirectory,
         env: { ...process.env, ...this.config.env },
@@ -205,6 +206,7 @@ export class Session extends EventEmitter {
           this.emit('promptComplete', response);
           resolve(response);
         } else {
+          this.emit('system', `Exited with code ${code}, signal ${signal ?? 'none'}`);
           // Crash detected — classify exit code and emit crashed event
           const { classification, reason } = classifyExitCode(code, signal);
 
@@ -342,6 +344,13 @@ export class Session extends EventEmitter {
     }
 
     await this.sandbox?.stop();
+  }
+
+  forceKill(): void {
+    if (this.activeProcess) {
+      this.activeProcess.kill('SIGKILL');
+      this.activeProcess = null;
+    }
   }
 
   getState(): SessionState {

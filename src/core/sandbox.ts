@@ -596,4 +596,12 @@ export class SandboxManager {
   getLevel(): SandboxLevel {
     return this.options.level ?? 'permissive';
   }
+
+  getProfilePath(): string | null {
+    return this.sbProfilePath ?? null;
+  }
+
+  getContainerId(): string | null {
+    return this.containerId ?? null;
+  }
 }

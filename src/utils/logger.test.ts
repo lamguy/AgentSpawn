@@ -72,6 +72,56 @@ describe('Logger', () => {
     expect(spy).toHaveBeenCalledWith('count:', 42, { key: 'val' });
   });
 
+  describe('setSilent', () => {
+    it('setSilent(true) suppresses all log levels', () => {
+      const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+
+      const l = new Logger('debug');
+      l.setSilent(true);
+
+      l.info('should not appear');
+      l.warn('should not appear');
+      l.error('should not appear');
+      l.debug('should not appear');
+
+      expect(infoSpy).not.toHaveBeenCalled();
+      expect(warnSpy).not.toHaveBeenCalled();
+      expect(errorSpy).not.toHaveBeenCalled();
+      expect(debugSpy).not.toHaveBeenCalled();
+    });
+
+    it('setSilent(false) restores logging', () => {
+      const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+
+      const l = new Logger('info');
+      l.setSilent(true);
+      l.info('silenced');
+      expect(infoSpy).not.toHaveBeenCalled();
+
+      l.setSilent(false);
+      l.info('restored');
+      expect(infoSpy).toHaveBeenCalledWith('restored');
+    });
+
+    it('setSilent(true) called twice is idempotent', () => {
+      const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const l = new Logger('info');
+      l.setSilent(true);
+      l.setSilent(true);
+
+      l.info('still silent');
+      l.error('still silent');
+
+      expect(infoSpy).not.toHaveBeenCalled();
+      expect(errorSpy).not.toHaveBeenCalled();
+    });
+  });
+
   describe('singleton logger export', () => {
     it('should be an instance of Logger', () => {
       expect(logger).toBeInstanceOf(Logger);

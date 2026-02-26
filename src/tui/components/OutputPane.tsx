@@ -103,9 +103,10 @@ export function OutputPane({
   );
 }
 
-function classifyLine(text: string, isError: boolean): 'user-prompt' | 'tool-call' | 'tool-result' | 'error' | 'normal' {
-  if (isError) return 'error';
-  const trimmed = text.trimStart();
+function classifyLine(line: OutputLine): 'user-prompt' | 'tool-call' | 'tool-result' | 'error' | 'system' | 'normal' {
+  if (line.isSystem) return 'system';
+  if (line.isError) return 'error';
+  const trimmed = line.text.trimStart();
   if (trimmed.startsWith('You:') || trimmed.startsWith('>')) return 'user-prompt';
   if (trimmed.startsWith('\u23FA') || trimmed.startsWith('*')) return 'tool-call';
   if (trimmed.startsWith('\u23BF') || trimmed.startsWith('|')) return 'tool-result';
@@ -118,7 +119,7 @@ function formatTimestamp(date: Date): string {
 
 function StyledOutputLine({ line }: { line: OutputLine }): React.ReactElement {
   const text = line.text;
-  const lineType = classifyLine(text, line.isError);
+  const lineType = classifyLine(line);
   const timestamp = formatTimestamp(line.timestamp);
 
   return (
@@ -128,6 +129,7 @@ function StyledOutputLine({ line }: { line: OutputLine }): React.ReactElement {
       {lineType === 'user-prompt' && <Text bold color={ARCADE_COLORS.hotPink}>{text}</Text>}
       {lineType === 'tool-call'   && <Text color={ARCADE_COLORS.neonCyan}>{text}</Text>}
       {lineType === 'tool-result' && <Text color={ARCADE_COLORS.phosphorGray}>{text}</Text>}
+      {lineType === 'system'      && <Text color={ARCADE_COLORS.scanlineGray}>{line.text}</Text>}
       {lineType === 'normal'      && <Text color={ARCADE_COLORS.ghostWhite}>{text}</Text>}
     </Box>
   );
