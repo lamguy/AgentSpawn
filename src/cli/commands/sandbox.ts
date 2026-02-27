@@ -4,8 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { createInterface } from 'node:readline';
 import { SessionManager } from '../../core/manager.js';
 import { SandboxManager } from '../../core/sandbox.js';
+import { SandboxLogWatcher } from '../../core/sandbox-log-watcher.js';
 import type { SandboxBackend, SandboxLevel } from '../../types.js';
 
 const execFileAsync = promisify(execFile);
@@ -129,6 +131,86 @@ export function registerSandboxCommand(program: Command, manager: SessionManager
           console.error(`Error: Could not scan workdir: ${(e as Error).message}`);
           process.exitCode = 1;
         }
+      }
+    });
+
+  // agentspawn sandbox logs [session]
+  sandbox
+    .command('logs [session]')
+    .description('Stream or show historical sandbox violations for a session')
+    .option('--past <duration>', 'Show historical violations instead of streaming (e.g. 5m, 1h)')
+    .action(async (sessionName: string | undefined, options: { past?: string }) => {
+      if (!SandboxLogWatcher.isPlatformSupported()) {
+        console.error('Error: sandbox logs requires macOS');
+        process.exitCode = 1;
+        return;
+      }
+
+      let watcherPid: number | undefined;
+
+      if (sessionName !== undefined) {
+        const info = manager.getSessionInfo(sessionName);
+        if (!info) {
+          console.error(`Error: Session not found: ${sessionName}`);
+          process.exitCode = 1;
+          return;
+        }
+        if (info.pid === 0) {
+          console.warn(`Warning: Session "${sessionName}" PID is 0; showing all sandbox violations`);
+          watcherPid = undefined;
+        } else {
+          watcherPid = info.pid;
+        }
+      }
+
+      if (options.past && !/^\d+[smhd]$/.test(options.past)) {
+        console.error('Error: --past must be a duration like 5m, 1h, 2d');
+        process.exitCode = 1;
+        return;
+      }
+
+      const watcher = new SandboxLogWatcher({ pid: watcherPid, past: options.past });
+
+      if (options.past) {
+        console.log(`Showing sandbox violations (last ${options.past})...`);
+      } else {
+        console.log('Watching sandbox violations... (Ctrl+C to stop)');
+      }
+
+      const child = watcher.start();
+
+      if (!child.stdout) {
+        console.error('Error: sandbox log stream did not open stdout');
+        process.exitCode = 1;
+        return;
+      }
+      const rl = createInterface({ input: child.stdout });
+
+      rl.on('line', (line: string) => {
+        const entry = watcher.parseLine(line);
+        if (entry) {
+          console.log(`[${entry.timestamp}] ${entry.processName}(${entry.pid}) ${entry.operation} ${entry.path}`);
+        }
+      });
+
+      if (!options.past) {
+        await new Promise<void>((resolve) => {
+          process.once('SIGINT', () => {
+            watcher.stop();
+            rl.close();
+            resolve();
+          });
+          child.on('close', () => {
+            rl.close();
+            resolve();
+          });
+        });
+        process.exit(0);
+      } else {
+        await new Promise<void>((resolve) => {
+          rl.on('close', resolve);
+        });
+        rl.close();
       }
     });
 }
