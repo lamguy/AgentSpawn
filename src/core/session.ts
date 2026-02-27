@@ -112,7 +112,10 @@ export class Session extends EventEmitter {
         : { cmd: 'claude', args };
       const shortSessionId = this.claudeSessionId.slice(0, 8);
       const permMode = this.config.permissionMode ?? 'default';
-      this.emit('system', `Spawning claude [${this.sandbox?.getBackend() ?? 'native'}] session=${shortSessionId} mode=${permMode}`);
+      const sandboxInfo = this.sandbox
+        ? `${this.sandbox.getBackend()}:${this.sandbox.getLevel()}`
+        : 'none';
+      this.emit('system', `Spawning claude [sandbox=${sandboxInfo}] session=${shortSessionId} mode=${permMode}`);
       const child = spawn(cmd, spawnArgs, {
         cwd: this.config.workingDirectory,
         env: { ...process.env, ...this.config.env },
