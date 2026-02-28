@@ -16,6 +16,10 @@ export class OutputCapture {
   private readonly maxLineLength: number;
   private readonly logger: Logger | undefined;
   private totalLineCount: number = 0;
+  private liveLineIndices: Map<string, number> = new Map();
+
+  /** Optional callback invoked whenever the buffer changes. */
+  onUpdate?: () => void;
 
   constructor(config?: OutputCaptureConfig, logger?: Logger) {
     this.maxLinesPerSession = config?.maxLinesPerSession ?? 1000;
@@ -51,15 +55,16 @@ export class OutputCapture {
     }
 
     const onPromptStart = (prompt: string): void => {
+      this.finalizeLiveLine(sessionName);
       this.appendLine(sessionName, `You: ${prompt}`, false);
     };
 
     const onData = (chunk: string): void => {
-      // Append response data as it streams in
-      this.appendOutput(sessionName, chunk, false);
+      this.appendStreamingChunk(sessionName, chunk);
     };
 
     const onPromptComplete = (): void => {
+      this.finalizeLiveLine(sessionName);
       // Add a blank line after response for readability
       this.appendLine(sessionName, '', false);
     };
@@ -140,6 +145,8 @@ export class OutputCapture {
     if (this.maxTotalLines !== Infinity) {
       this.evictGlobalLines();
     }
+
+    this.onUpdate?.();
   }
 
   /**
@@ -147,6 +154,129 @@ export class OutputCapture {
    */
   getLines(sessionName: string): OutputLine[] {
     return this.buffers.get(sessionName) ?? [];
+  }
+
+  /**
+   * Mark the current live line for a session as finalized (no longer streaming).
+   */
+  finalizeLiveLine(sessionName: string): void {
+    const idx = this.liveLineIndices.get(sessionName);
+    if (idx === undefined) return;
+    const buffer = this.buffers.get(sessionName);
+    if (!buffer || idx >= buffer.length) {
+      this.liveLineIndices.delete(sessionName);
+      return;
+    }
+    buffer[idx] = { ...buffer[idx], isLive: false };
+    this.liveLineIndices.delete(sessionName);
+  }
+
+  /**
+   * Append a streaming chunk of text to a session's live output line.
+   * Splits on newlines: fragments before a newline accumulate on the current
+   * live line; a newline finalizes it and starts a fresh live line.
+   */
+  appendStreamingChunk(sessionName: string, text: string): void {
+    if (!this.buffers.has(sessionName)) {
+      this.buffers.set(sessionName, []);
+    }
+
+    const parts = text.split('\n');
+    // parts[0]       — fragment before the first \n (or whole text if no \n)
+    // parts[1..n-2]  — complete middle lines (only present when \n chars exist)
+    // parts[n-1]     — fragment after the last \n (starts a new live line)
+
+    // Append parts[0] to the current live line (or create one)
+    const buffer = this.buffers.get(sessionName)!;
+    const existingIdx = this.liveLineIndices.get(sessionName);
+
+    if (existingIdx !== undefined && existingIdx < buffer.length) {
+      // Update existing live line in-place via replacement
+      const existing = buffer[existingIdx];
+      buffer[existingIdx] = {
+        ...existing,
+        text: existing.text + parts[0],
+        isLive: true,
+      };
+      this.onUpdate?.();
+    } else {
+      // Create a new live line
+      const newLine: OutputLine = {
+        sessionName,
+        text: parts[0],
+        timestamp: new Date(),
+        isError: false,
+        isLive: true,
+      };
+      buffer.push(newLine);
+      this.totalLineCount++;
+      this.liveLineIndices.set(sessionName, buffer.length - 1);
+
+      // Apply per-session cap
+      if (buffer.length > this.maxLinesPerSession) {
+        buffer.shift();
+        this.totalLineCount--;
+        const currentIdx = this.liveLineIndices.get(sessionName);
+        if (currentIdx !== undefined && currentIdx > 0) {
+          this.liveLineIndices.set(sessionName, currentIdx - 1);
+        } else {
+          this.liveLineIndices.delete(sessionName);
+        }
+      }
+
+      if (this.maxTotalLines !== Infinity) {
+        this.evictGlobalLines();
+      }
+      this.onUpdate?.();
+    }
+
+    if (parts.length === 1) {
+      // No newline in this chunk — just updated the live line
+      this.onUpdate?.();
+      return;
+    }
+
+    // Newline(s) present: finalize the current live line, add middle lines,
+    // then start a new live line for the trailing fragment
+    this.finalizeLiveLine(sessionName);
+
+    // Middle complete lines (parts[1] through parts[parts.length - 2])
+    for (let i = 1; i < parts.length - 1; i++) {
+      this.appendLine(sessionName, parts[i], false);
+    }
+
+    // Last fragment becomes the new live line (even if empty — represents cursor)
+    const lastPart = parts[parts.length - 1];
+    const newLiveLine: OutputLine = {
+      sessionName,
+      text: lastPart,
+      timestamp: new Date(),
+      isError: false,
+      isLive: true,
+    };
+    const buf = this.buffers.get(sessionName)!;
+    buf.push(newLiveLine);
+    this.totalLineCount++;
+    this.liveLineIndices.set(sessionName, buf.length - 1);
+
+    // Apply per-session cap (mirrors the else-branch above)
+    if (buf.length > this.maxLinesPerSession) {
+      buf.shift();
+      this.totalLineCount--;
+      const currentIdx = this.liveLineIndices.get(sessionName);
+      if (currentIdx !== undefined && currentIdx > 0) {
+        this.liveLineIndices.set(sessionName, currentIdx - 1);
+      } else {
+        this.liveLineIndices.delete(sessionName);
+      }
+    }
+    if (this.maxTotalLines !== Infinity) {
+      this.evictGlobalLines();
+    }
+
+    // onUpdate is already invoked inside appendLine for each middle line;
+    // emit one final notification for the new live line.
+    this.onUpdate?.();
   }
 
   /**
@@ -158,6 +288,7 @@ export class OutputCapture {
       this.totalLineCount -= buffer.length;
     }
     this.buffers.set(sessionName, []);
+    this.liveLineIndices.delete(sessionName);
   }
 
   /**
@@ -166,6 +297,7 @@ export class OutputCapture {
   clearAll(): void {
     this.buffers.clear();
     this.totalLineCount = 0;
+    this.liveLineIndices.clear();
   }
 
   /**
@@ -214,6 +346,17 @@ export class OutputCapture {
       buffer.shift();
       this.totalLineCount--;
       evicted++;
+
+      // Keep liveLineIndices consistent after shift
+      const liveIdx = this.liveLineIndices.get(oldestSession);
+      if (liveIdx !== undefined) {
+        if (liveIdx === 0) {
+          // The live line itself was evicted
+          this.liveLineIndices.delete(oldestSession);
+        } else {
+          this.liveLineIndices.set(oldestSession, liveIdx - 1);
+        }
+      }
 
       // If eviction emptied the buffer, remove from map (but not listeners)
       if (buffer.length === 0) {

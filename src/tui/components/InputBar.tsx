@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { ARCADE_COLORS, ARCADE_BLINK } from '../theme/arcade.js';
-import { BlinkText } from './BlinkText.js';
+import { ARCADE_COLORS } from '../theme/arcade.js';
+import { useSpinner } from '../hooks/useSpinner.js';
 
 export interface InputBarProps {
   isActive: boolean;
@@ -26,6 +26,7 @@ export function InputBar({
   pendingInput,
   onPendingInputConsumed,
 }: InputBarProps): React.ReactElement {
+  const spinner = useSpinner(80);
   const [inputText, setInputText] = useState('');
   const [cursorPos, setCursorPos] = useState(0);
 
@@ -87,9 +88,8 @@ export function InputBar({
               <Text bold color={ARCADE_COLORS.hotPink}>{sessionName} </Text>
             )}
             <Text bold color={ARCADE_COLORS.acidYellow}>{'>>'} </Text>
-            <BlinkText color={ARCADE_COLORS.acidYellow} bold intervalMs={ARCADE_BLINK.processing}>
-              PROCESSING...
-            </BlinkText>
+            <Text color={ARCADE_COLORS.neonCyan}>{spinner} </Text>
+            <Text color={ARCADE_COLORS.phosphorGray}>waiting for response...</Text>
           </Box>
         </Box>
       </Box>

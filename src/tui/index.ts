@@ -207,6 +207,31 @@ export class TUI {
   }
 
   /**
+   * Refresh the output line caches in state from the OutputCapture buffers.
+   * Called both from updateState() and from the onUpdate streaming callback.
+   */
+  private updateOutputLines(): void {
+    const outputSessionName =
+      this.state.mode === 'attached' && this.state.attachedSessionName
+        ? this.state.attachedSessionName
+        : this.state.selectedSessionName;
+
+    if (outputSessionName) {
+      this.state.outputLines = this.outputCapture.getLines(outputSessionName);
+    }
+
+    if (this.state.splitMode) {
+      const splitMap = new Map<string, OutputLine[]>();
+      for (const sessionName of this.state.splitPaneSessions) {
+        if (sessionName) {
+          splitMap.set(sessionName, this.outputCapture.getLines(sessionName));
+        }
+      }
+      this.state.splitOutputLines = splitMap;
+    }
+  }
+
+  /**
    * Update TUI state from adapters.
    */
   private updateState(): void {
@@ -545,6 +570,8 @@ export class TUI {
 
   /**
    * Handle a prompt submission from the InputBar.
+   * Drives per-chunk re-renders via outputCapture.onUpdate so users see
+   * streaming output in real time.
    */
   private async handleSendPrompt(sessionName: string, prompt: string): Promise<void> {
     const session = await this.ensureSession(sessionName);
@@ -554,15 +581,20 @@ export class TUI {
       return;
     }
 
-    // Set processing state
     this.state.isProcessing = true;
-    this.forceRerender();
+
+    // Drive re-renders as streaming output arrives so users see it in real time
+    this.outputCapture.onUpdate = () => {
+      this.updateOutputLines();
+      this.forceRerender();
+    };
 
     try {
       await session.sendPrompt(prompt);
     } catch {
       // Error already emitted by session and captured by OutputCapture
     } finally {
+      this.outputCapture.onUpdate = undefined;
       this.state.isProcessing = false;
       this.forceRerender();
     }

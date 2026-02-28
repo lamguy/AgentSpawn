@@ -208,6 +208,8 @@ export interface OutputLine {
   isError: boolean;
   /** Whether this is a system-generated message (not session output) */
   isSystem?: boolean;
+  /** Whether this line is still being streamed (i.e., no newline received yet) */
+  isLive?: boolean;
 }
 
 /**

@@ -85,7 +85,7 @@ export function OutputPane({
         ) : (
           visibleLines.map((line, index) => (
             <StyledOutputLine
-              key={`${line.timestamp.getTime()}-${index}`}
+              key={`${line.sessionName}-${visibleStartIndex + index}`}
               line={line}
             />
           ))
@@ -130,7 +130,12 @@ function StyledOutputLine({ line }: { line: OutputLine }): React.ReactElement {
       {lineType === 'tool-call'   && <Text color={ARCADE_COLORS.neonCyan}>{text}</Text>}
       {lineType === 'tool-result' && <Text color={ARCADE_COLORS.phosphorGray}>{text}</Text>}
       {lineType === 'system'      && <Text color={ARCADE_COLORS.scanlineGray}>{line.text}</Text>}
-      {lineType === 'normal'      && <Text color={ARCADE_COLORS.ghostWhite}>{text}</Text>}
+      {lineType === 'normal' && (
+        <Text color={ARCADE_COLORS.ghostWhite}>
+          {text}
+          {line.isLive && <Text color={ARCADE_COLORS.phosphorGray}>▌</Text>}
+        </Text>
+      )}
     </Box>
   );
 }
