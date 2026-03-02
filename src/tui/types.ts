@@ -41,15 +41,17 @@ export interface SessionCreationOverlayState {
     template: string;
     directory: string;
     permissionMode: string;
+    provider: string;
   };
   /** Which form field is currently focused */
-  activeField: 'name' | 'template' | 'directory' | 'permissionMode';
+  activeField: 'name' | 'template' | 'directory' | 'permissionMode' | 'provider';
   /** Validation errors keyed by field name (empty string = no error) */
   errors: {
     name: string;
     template: string;
     directory: string;
     permissionMode: string;
+    provider: string;
   };
   /** Whether the form submission is in progress */
   isSubmitting: boolean;
@@ -99,8 +101,8 @@ export interface StatusMessage {
  * Key handlers produce these; the orchestrator consumes them.
  */
 export type TUIAction =
-  | { kind: 'create-session'; name: string; directory: string; permissionMode: string }
-  | { kind: 'create-session-from-template'; name: string; templateName: string; directory: string; permissionMode: string }
+  | { kind: 'create-session'; name: string; directory: string; permissionMode: string; provider?: string }
+  | { kind: 'create-session-from-template'; name: string; templateName: string; directory: string; permissionMode: string; provider?: string }
   | { kind: 'stop-session'; sessionName: string }
   | { kind: 'force-kill-session'; sessionName: string }
   | { kind: 'restart-session'; sessionName: string }

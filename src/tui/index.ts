@@ -9,6 +9,7 @@ import { logger } from '../utils/logger.js';
 import { SessionManagerAdapter, RouterAdapter } from './adapters.js';
 import { OutputCapture } from './output-capture.js';
 import type { TUIOptions, TUIState, TUIAction, StatusMessage, HistorySearchOverlayState, OutputLine } from './types.js';
+import type { ProviderType } from '../types.js';
 import { TUIApp } from './components/TUIApp.js';
 import { type KeybindingConfig, DEFAULT_KEYBINDINGS, loadKeybindings } from '../config/keybindings.js';
 import type { RemotePoller, RemoteSessionsEvent, RemoteErrorEvent } from './remote-poller.js';
@@ -297,10 +298,10 @@ export class TUI {
   private executeAction(action: TUIAction): void {
     switch (action.kind) {
       case 'create-session':
-        this.handleCreateSession(action.name, action.directory, action.permissionMode);
+        this.handleCreateSession(action.name, action.directory, action.permissionMode, undefined, action.provider as ProviderType | undefined);
         break;
       case 'create-session-from-template':
-        this.handleCreateSessionFromTemplate(action.name, action.templateName, action.directory, action.permissionMode);
+        this.handleCreateSessionFromTemplate(action.name, action.templateName, action.directory, action.permissionMode, action.provider as ProviderType | undefined);
         break;
       case 'stop-session':
         this.handleStopSession(action.sessionName);
@@ -339,13 +340,14 @@ export class TUI {
   /**
    * Create a new session from the session-creation overlay.
    */
-  private async handleCreateSession(name: string, directory: string, permissionMode: string, env?: Record<string, string>): Promise<void> {
+  private async handleCreateSession(name: string, directory: string, permissionMode: string, env?: Record<string, string>, provider?: ProviderType): Promise<void> {
     try {
       const session = await this.manager.startSession({
         name,
         workingDirectory: directory || process.cwd(),
         permissionMode: permissionMode || 'bypassPermissions',
         env,
+        provider: provider ?? 'claude',
       });
       this.outputCapture.captureSession(name, session);
 
@@ -387,6 +389,7 @@ export class TUI {
     templateName: string,
     directory: string,
     permissionMode: string,
+    provider?: ProviderType,
   ): Promise<void> {
     if (!this.templateManager) {
       this.setStatusMessage('Template manager not available', 'error');
@@ -403,7 +406,7 @@ export class TUI {
         ? permissionMode
         : (template.permissionMode ?? 'bypassPermissions');
 
-      await this.handleCreateSession(name, mergedDirectory, mergedPermissionMode, template.env);
+      await this.handleCreateSession(name, mergedDirectory, mergedPermissionMode, template.env, provider);
     } catch (err) {
       const message = err instanceof Error ? err.message : `Template "${templateName}" not found`;
       this.setStatusMessage(message, 'error');

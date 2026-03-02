@@ -7,6 +7,7 @@ import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
 import { classifyExitCode } from './restart-policy.js';
 import { SandboxManager } from './sandbox.js';
+import { type ProviderAdapter, createProvider } from './providers/index.js';
 
 /**
  * Session — represents a conversation with Claude Code.
@@ -29,6 +30,7 @@ export class Session extends EventEmitter {
   private responseTimes: number[] = [];
   private totalResponseChars: number = 0;
   private promptStartTime: number = 0;
+  private conversationHistory: Array<{ role: 'user' | 'assistant'; text: string }> = [];
 
   constructor(
     private readonly config: SessionConfig,
@@ -37,6 +39,7 @@ export class Session extends EventEmitter {
     initialPromptCount?: number,
     initialRetryCount: number = 0,
     private readonly sandbox?: SandboxManager,
+    private readonly provider: ProviderAdapter = createProvider('claude'),
   ) {
     super();
     this.claudeSessionId = initialSessionId ?? crypto.randomUUID();
@@ -77,6 +80,17 @@ export class Session extends EventEmitter {
     // Record start time for response-time tracking
     this.promptStartTime = Date.now();
 
+    // For non-native providers, prepend conversation history as a transcript
+    let actualPrompt = prompt;
+    if (!this.provider.supportsNativeSession && this.conversationHistory.length > 0) {
+      const maxTurns = this.config.maxHistoryTurns ?? 10;
+      const history = this.conversationHistory.slice(-maxTurns * 2);
+      const transcript = history
+        .map(h => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.text}`)
+        .join('\n');
+      actualPrompt = `[Previous conversation]\n${transcript}\n[End of conversation]\n\nUser: ${prompt}`;
+    }
+
     logger.info(`Sending prompt to session "${this.config.name}"`);
     this.emit('promptStart', prompt);
 
@@ -95,27 +109,22 @@ export class Session extends EventEmitter {
         }
       };
 
-      // Build args: first prompt uses --session-id, subsequent use --resume
-      const args = ['--print', '--output-format', 'stream-json', '--verbose'];
-      if (this.promptCount === 0) {
-        args.push('--session-id', this.claudeSessionId);
-      } else {
-        args.push('--resume', this.claudeSessionId);
-      }
-
-      if (this.config.permissionMode) {
-        args.push('--permission-mode', this.config.permissionMode);
-      }
+      // Build args using provider adapter
+      const baseArgs = this.promptCount === 0
+        ? this.provider.buildFirstPromptArgs(this.claudeSessionId)
+        : this.provider.buildResumeArgs(this.claudeSessionId);
+      const modeArgs = this.provider.buildModeArgs(this.config.permissionMode);
+      const args = [...baseArgs, ...modeArgs];
 
       const { cmd, args: spawnArgs } = this.sandbox
         ? this.sandbox.buildSpawnArgs(args)
-        : { cmd: 'claude', args };
+        : { cmd: this.provider.binary, args };
       const shortSessionId = this.claudeSessionId.slice(0, 8);
       const permMode = this.config.permissionMode ?? 'default';
       const sandboxInfo = this.sandbox
         ? `${this.sandbox.getBackend()}:${this.sandbox.getLevel()}`
         : 'none';
-      this.emit('system', `Spawning claude [sandbox=${sandboxInfo}] session=${shortSessionId} mode=${permMode}`);
+      this.emit('system', `Spawning ${this.provider.type} [sandbox=${sandboxInfo}] session=${shortSessionId} mode=${permMode}`);
       const child = spawn(cmd, spawnArgs, {
         cwd: this.config.workingDirectory,
         env: { ...process.env, ...this.config.env },
@@ -139,17 +148,10 @@ export class Session extends EventEmitter {
           const trimmed = line.trim();
           if (!trimmed) continue;
 
-          try {
-            const event = JSON.parse(trimmed);
-            const text = this.extractText(event);
-            if (text) {
-              response += text;
-              this.emit('data', text);
-            }
-          } catch {
-            // Non-JSON output — emit as-is
-            response += trimmed;
-            this.emit('data', trimmed);
+          const text = this.provider.extractText(trimmed);
+          if (text !== null) {
+            response += text;
+            this.emit('data', text);
           }
         }
       });
@@ -169,17 +171,12 @@ export class Session extends EventEmitter {
       });
 
       child.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
-        // Process any remaining buffered JSON
+        // Process any remaining buffered output
         if (jsonBuffer.trim()) {
-          try {
-            const event = JSON.parse(jsonBuffer.trim());
-            const text = this.extractText(event);
-            if (text) {
-              response += text;
-              this.emit('data', text);
-            }
-          } catch {
-            // Ignore
+          const text = this.provider.extractText(jsonBuffer.trim());
+          if (text !== null) {
+            response += text;
+            this.emit('data', text);
           }
         }
 
@@ -208,6 +205,11 @@ export class Session extends EventEmitter {
           this.totalResponseChars += response.length;
           this.retryCount = 0;
           logger.info(`Prompt completed for session "${this.config.name}"`);
+          // Track conversation history for non-native providers
+          if (!this.provider.supportsNativeSession) {
+            this.conversationHistory.push({ role: 'user', text: prompt });
+            this.conversationHistory.push({ role: 'assistant', text: response });
+          }
           this.emit('promptComplete', response);
           resolve(response);
         } else {
@@ -230,14 +232,14 @@ export class Session extends EventEmitter {
 
           this.emit('crashed', crashedEvent);
 
-          const err = new Error(`Claude exited with code ${code}: ${reason}`);
+          const err = new Error(`${this.provider.type} exited with code ${code}: ${reason}`);
           this.emit('promptError', err);
           reject(err);
         }
       });
 
       // Write prompt to stdin and close it
-      child.stdin?.write(prompt);
+      child.stdin?.write(actualPrompt);
       child.stdin?.end();
 
       // Set up timeout if enabled (timeoutMs > 0; 0 means no timeout)
@@ -276,46 +278,6 @@ export class Session extends EventEmitter {
     });
   }
 
-  /**
-   * Extract displayable text from a stream-json event.
-   *
-   * Stream-json events include:
-   * - { type: "assistant", message: { content: [{ type: "text", text: "..." }] } }
-   * - { type: "content_block_delta", delta: { type: "text_delta", text: "..." } }
-   * - { type: "result", result: "..." }
-   * - { type: "system" } — init metadata, ignored
-   */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private extractText(event: any): string | null {
-    if (!event || !event.type) return null;
-
-    switch (event.type) {
-      case 'assistant': {
-        // Full assistant message — extract text content blocks
-        const content = event.message?.content;
-        if (Array.isArray(content)) {
-          const texts = content
-            .filter((c: { type: string }) => c.type === 'text')
-            .map((c: { text: string }) => c.text);
-          return texts.length > 0 ? texts.join('') : null;
-        }
-        return null;
-      }
-      case 'content_block_delta': {
-        // Streaming text delta
-        if (event.delta?.type === 'text_delta') {
-          return event.delta.text ?? null;
-        }
-        return null;
-      }
-      case 'result': {
-        // Final result — only use if we haven't already captured content
-        return null; // Content already captured via assistant/delta events
-      }
-      default:
-        return null;
-    }
-  }
 
   /**
    * Check if a prompt is currently being processed.

@@ -32,6 +32,8 @@ export class SandboxManager {
     private readonly workingDirectory: string,
     private readonly backend: SandboxBackend,
     private readonly options: SandboxOptions = {},
+    private readonly providerBinary: string = 'claude',
+    private readonly providerConfigDir: string = `${os.homedir()}/.claude`,
   ) {}
 
   /**
@@ -142,7 +144,7 @@ export class SandboxManager {
       case 'podman':
       case 'docker': {
         const binary = this.backend; // 'docker' or 'podman'
-        const { stdout: claudePathRaw } = await execFileAsync('which', ['claude']);
+        const { stdout: claudePathRaw } = await execFileAsync('which', [this.providerBinary]);
         const claudePath = claudePathRaw.trim();
         const homedir = os.homedir();
         const containerName = `agentspawn-${this.sessionName}`;
@@ -162,8 +164,8 @@ export class SandboxManager {
         const containerArgs: string[] = [
           'run', '-d', '--rm',
           '--name', containerName,
-          '-v', `${claudePath}:/usr/local/bin/claude:ro`,
-          '-v', `${homedir}/.claude:/root/.claude:ro`,
+          '-v', `${claudePath}:/usr/local/bin/${this.providerBinary}:ro`,
+          '-v', `${this.providerConfigDir}:/root/${path.basename(this.providerConfigDir)}:ro`,
           '-v', `${this.workingDirectory}:${this.workingDirectory}:rw`,
           '--workdir', this.workingDirectory,
           // bridge network prevents Claude from accessing host localhost services
@@ -252,7 +254,7 @@ export class SandboxManager {
         '(version 1)',
         '(allow default)',
         '(deny file-write* (subpath "/"))',
-        `(allow file-write* (subpath "${workdir}") (subpath "/tmp") (subpath "${homedir}/.claude"))`,
+        `(allow file-write* (subpath "${workdir}") (subpath "/tmp") (subpath "${this.providerConfigDir}"))`,
       ].join('\n');
     }
 
@@ -261,7 +263,7 @@ export class SandboxManager {
         '(version 1)',
         '(allow default)',
         '(deny file-write* (subpath "/"))',
-        `(allow file-write* (subpath "${workdir}") (subpath "/tmp") (subpath "${homedir}/.claude"))`,
+        `(allow file-write* (subpath "${workdir}") (subpath "/tmp") (subpath "${this.providerConfigDir}"))`,
         '(deny file-read*',
         `  (subpath "${homedir}/.ssh")`,
         `  (subpath "${homedir}/.gnupg")`,
@@ -285,7 +287,7 @@ export class SandboxManager {
       `(allow file-write* (subpath "${workdir}") (subpath "/tmp"))`,
       `(deny file-read* (subpath "${homedir}"))`,
       '(allow file-read*',
-      `  (subpath "${homedir}/.claude")`,
+      `  (subpath "${this.providerConfigDir}")`,
       `  (subpath "${workdir}"))`,
       '(deny network*)',
     ].join('\n');
@@ -299,8 +301,8 @@ export class SandboxManager {
    * bwrap:         bwrap <namespace flags> claude ...claudeArgs
    * sandbox-exec:  sandbox-exec -f <profile> claude ...claudeArgs
    */
-  buildSpawnArgs(claudeArgs: string[]): { cmd: string; args: string[] } {
-    return this.buildArbitrarySpawnArgs('claude', claudeArgs);
+  buildSpawnArgs(providerArgs: string[]): { cmd: string; args: string[] } {
+    return this.buildArbitrarySpawnArgs(this.providerBinary, providerArgs);
   }
 
   /**
@@ -331,7 +333,7 @@ export class SandboxManager {
               '--ro-bind', '/', '/',
               '--bind', this.workingDirectory, this.workingDirectory,
               '--tmpfs', '/tmp',
-              '--ro-bind', `${homedir}/.claude`, `${homedir}/.claude`,
+              '--ro-bind', this.providerConfigDir, this.providerConfigDir,
               '--dev', '/dev',
               '--proc', '/proc',
               '--unshare-all',

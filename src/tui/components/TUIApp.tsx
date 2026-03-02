@@ -289,7 +289,7 @@ export function TUIApp({
         <Box flexDirection="row" justifyContent="space-between" marginTop={0}>
           <Box flexDirection="row" gap={1}>
             <Text color={ARCADE_COLORS.acidYellow}>
-              {ARCADE_DECOR.sectionTitle('SESSION MANAGER')}
+              {ARCADE_DECOR.sectionTitle('MULTI-AGENT AI SESSION MANAGER')}
             </Text>
             {isAttached && state.attachedSessionName && (
               <Text

@@ -12,6 +12,7 @@ import {
 } from '../types.js';
 import { SessionAlreadyExistsError, SessionNotFoundError, SandboxNotAvailableError, SandboxStartError } from '../utils/errors.js';
 import { SandboxManager } from './sandbox.js';
+import { createProvider } from './providers/index.js';
 import { logger } from '../utils/logger.js';
 import { HistoryStore } from './history.js';
 import { calculateBackoff } from './restart-policy.js';
@@ -92,10 +93,12 @@ export class SessionManager extends EventEmitter {
       cpuLimit: config.sandboxCpuLimit,
     };
 
+    const provider = createProvider(config.provider ?? 'claude', config);
+
     let backend = config.sandboxBackend ?? await SandboxManager.detectBackend();
     if (!backend) throw new SandboxNotAvailableError();
 
-    let sandbox = new SandboxManager(config.name, config.workingDirectory, backend, sandboxOptions);
+    let sandbox = new SandboxManager(config.name, config.workingDirectory, backend, sandboxOptions, provider.binary, provider.configDir);
     let pendingSystemMessages: string[] = [];
     try {
       pendingSystemMessages.push(`Starting ${sandbox.getBackend()} sandbox...`);
@@ -110,7 +113,7 @@ export class SessionManager extends EventEmitter {
             `Docker sandbox failed for session "${config.name}", falling back to ${fallback}: ${(e as Error).message}`,
           );
           backend = fallback;
-          sandbox = new SandboxManager(config.name, config.workingDirectory, fallback, sandboxOptions);
+          sandbox = new SandboxManager(config.name, config.workingDirectory, fallback, sandboxOptions, provider.binary, provider.configDir);
           try {
             pendingSystemMessages = [`Starting ${sandbox.getBackend()} sandbox...`];
             await sandbox.start();
@@ -126,7 +129,7 @@ export class SessionManager extends EventEmitter {
       }
     }
     config = { ...config, sandboxBackend: backend };
-    const session = new Session(config, this.options?.shutdownTimeoutMs, claudeSessionId, promptCount, retryCount, sandbox);
+    const session = new Session(config, this.options?.shutdownTimeoutMs, claudeSessionId, promptCount, retryCount, sandbox, provider);
     for (const msg of pendingSystemMessages) {
       session.emit('system', msg);
     }

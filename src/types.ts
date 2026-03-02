@@ -6,6 +6,12 @@ import type { ExitClassification } from './core/restart-policy.js';
 export type SandboxBackend = 'docker' | 'podman' | 'bwrap' | 'sandbox-exec';
 
 /**
+ * AI provider type. Defined here (not in providers/provider.ts) to avoid
+ * circular dependencies — providers/provider.ts imports this from types.ts.
+ */
+export type ProviderType = 'claude' | 'gemini' | 'ollama' | 'openai-compat';
+
+/**
  * Isolation level for sandboxed sessions.
  * - permissive: write isolation only, reads and network open (default)
  * - standard: write isolation + credential dir read-blocking + resource limits
@@ -59,6 +65,16 @@ export interface SessionConfig {
   sandboxImage?: string;
   sandboxMemoryLimit?: string;
   sandboxCpuLimit?: number;
+  /** AI provider to use. Default: 'claude' */
+  provider?: ProviderType;
+  /** Model name for Ollama provider (e.g. 'llama3.2', 'mistral') */
+  modelName?: string;
+  /** Maximum conversation history turns for non-native providers. Default: 10 */
+  maxHistoryTurns?: number;
+  /** For openai-compat: override the CLI binary name */
+  providerBinary?: string;
+  /** For openai-compat: extra CLI flags */
+  providerArgs?: string[];
 }
 
 export interface SessionInfo {

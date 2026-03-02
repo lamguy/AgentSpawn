@@ -5,7 +5,7 @@ import { Router } from '../../io/router.js';
 import { TemplateManager } from '../../core/template.js';
 import { formatStatusLine } from '../../io/formatter.js';
 import { SessionAlreadyExistsError, SpawnFailedError, TemplateNotFoundError, SandboxNotAvailableError, SandboxStartError } from '../../utils/errors.js';
-import type { RestartPolicy, SandboxBackend, SandboxLevel } from '../../types.js';
+import type { RestartPolicy, SandboxBackend, SandboxLevel, ProviderType } from '../../types.js';
 
 export function registerStartCommand(
   program: Command,
@@ -27,7 +27,9 @@ export function registerStartCommand(
     .option('--sandbox-image <image>', 'Custom Docker/Podman image for sandbox (e.g. debian@sha256:...)')
     .option('--sandbox-memory <limit>', 'Memory limit for sandbox container (e.g. 512m)')
     .option('--sandbox-cpu <cores>', 'CPU limit for sandbox container (e.g. 0.5)')
-    .action(async (name: string, options: { dir?: string; permissionMode?: string; template?: string; maxRetries: string; retryBackoff: string; tag: string[]; sandboxBackend?: string; sandboxLevel?: string; sandboxImage?: string; sandboxMemory?: string; sandboxCpu?: string }) => {
+    .option('--provider <type>', 'AI provider: claude, gemini, ollama, openai-compat (default: claude)')
+    .option('--model <name>', 'Model name for Ollama provider (e.g. llama3.2, mistral)')
+    .action(async (name: string, options: { dir?: string; permissionMode?: string; template?: string; maxRetries: string; retryBackoff: string; tag: string[]; sandboxBackend?: string; sandboxLevel?: string; sandboxImage?: string; sandboxMemory?: string; sandboxCpu?: string; provider?: string; model?: string }) => {
       try {
         let workingDirectory = options.dir ? path.resolve(options.dir) : undefined;
         let permissionMode = options.permissionMode;
@@ -107,6 +109,12 @@ export function registerStartCommand(
           return;
         }
 
+        if (options.provider && !['claude', 'gemini', 'ollama', 'openai-compat'].includes(options.provider)) {
+          console.error('Error: --provider must be claude, gemini, ollama, or openai-compat');
+          process.exitCode = 1;
+          return;
+        }
+
         // Build restart policy: merge template defaults with CLI flags
         const restartPolicy: RestartPolicy = {
           enabled: true,
@@ -129,6 +137,8 @@ export function registerStartCommand(
           sandboxImage: options.sandboxImage,
           sandboxMemoryLimit: options.sandboxMemory,
           sandboxCpuLimit: options.sandboxCpu ? parseFloat(options.sandboxCpu) : undefined,
+          provider: options.provider as ProviderType | undefined,
+          modelName: options.model,
         });
         console.log(formatStatusLine(session.getInfo()));
       } catch (e) {

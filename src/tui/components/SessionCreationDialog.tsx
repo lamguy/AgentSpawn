@@ -4,12 +4,12 @@ import { ARCADE_COLORS, ARCADE_DECOR, ARCADE_BLINK } from '../theme/arcade.js';
 import { BlinkText } from './BlinkText.js';
 
 export interface SessionCreationDialogProps {
-  fields: { name: string; template: string; directory: string; permissionMode: string };
-  activeField: 'name' | 'template' | 'directory' | 'permissionMode';
-  errors: { name: string; template: string; directory: string; permissionMode: string };
+  fields: { name: string; template: string; directory: string; permissionMode: string; provider: string };
+  activeField: 'name' | 'template' | 'directory' | 'permissionMode' | 'provider';
+  errors: { name: string; template: string; directory: string; permissionMode: string; provider: string };
   isSubmitting: boolean;
-  onFieldChange: (field: 'name' | 'template' | 'directory' | 'permissionMode', value: string) => void;
-  onFieldSwitch: (field: 'name' | 'template' | 'directory' | 'permissionMode') => void;
+  onFieldChange: (field: 'name' | 'template' | 'directory' | 'permissionMode' | 'provider', value: string) => void;
+  onFieldSwitch: (field: 'name' | 'template' | 'directory' | 'permissionMode' | 'provider') => void;
   onSubmit: () => void;
   onDismiss: () => void;
 }
@@ -32,8 +32,8 @@ export function SessionCreationDialog({
       if (isSubmitting) return;
       if (key.escape)  { onDismiss(); return; }
       if (key.tab) {
-        const fieldOrder: Array<'name' | 'template' | 'directory' | 'permissionMode'> = [
-          'name', 'template', 'directory', 'permissionMode',
+        const fieldOrder: Array<'name' | 'template' | 'directory' | 'permissionMode' | 'provider'> = [
+          'name', 'template', 'directory', 'permissionMode', 'provider',
         ];
         const currentIdx = fieldOrder.indexOf(activeField);
         onFieldSwitch(fieldOrder[(currentIdx + 1) % fieldOrder.length]);
@@ -45,13 +45,43 @@ export function SessionCreationDialog({
         if (v.length > 0) onFieldChange(activeField, v.slice(0, -1));
         return;
       }
-      if (key.upArrow || key.downArrow || key.leftArrow || key.rightArrow) return;
+      if (key.upArrow || key.downArrow) return;
+      // Provider field uses left/right to cycle — let keybindings.ts handle it via onFieldSwitch
+      if (key.leftArrow || key.rightArrow) return;
+      if (activeField === 'provider') return;  // provider is not free-text
       if (input && !key.ctrl && !key.meta) {
         onFieldChange(activeField, fields[activeField] + input);
       }
     },
     { isActive: true },
   );
+
+  const PROVIDER_OPTIONS = ['claude', 'gemini', 'ollama', 'openai-compat'] as const;
+
+  const renderProviderField = (): React.ReactElement => {
+    const isActive = activeField === 'provider';
+    const current = fields.provider || 'claude';
+    const idx = PROVIDER_OPTIONS.indexOf(current as typeof PROVIDER_OPTIONS[number]);
+    const prevOption = PROVIDER_OPTIONS[(idx - 1 + PROVIDER_OPTIONS.length) % PROVIDER_OPTIONS.length];
+    const nextOption = PROVIDER_OPTIONS[(idx + 1) % PROVIDER_OPTIONS.length];
+    return (
+      <Box flexDirection="column">
+        <Text bold color={isActive ? ARCADE_COLORS.neonCyan : ARCADE_COLORS.ghostWhite}>
+          PROVIDER:
+        </Text>
+        <Box
+          borderStyle="single"
+          borderColor={isActive ? ARCADE_COLORS.neonCyan : ARCADE_COLORS.phosphorGray}
+          paddingX={1}
+          flexDirection="row"
+        >
+          <Text color={ARCADE_COLORS.phosphorGray}>{isActive ? `< ${prevOption} ` : '  '}</Text>
+          <Text bold color={isActive ? ARCADE_COLORS.neonCyan : ARCADE_COLORS.ghostWhite}>{current}</Text>
+          <Text color={ARCADE_COLORS.phosphorGray}>{isActive ? ` ${nextOption} >` : ''}</Text>
+        </Box>
+      </Box>
+    );
+  };
 
   const renderField = (
     label: string,
@@ -129,6 +159,9 @@ export function SessionCreationDialog({
             <Box marginTop={1}>
               {renderField('PERMISSION MODE', 'permissionMode', 'bypassPermissions')}
             </Box>
+            <Box marginTop={1}>
+              {renderProviderField()}
+            </Box>
           </Box>
         )}
 
@@ -136,6 +169,7 @@ export function SessionCreationDialog({
         <Box flexDirection="column" marginTop={1}>
           <Text color={ARCADE_COLORS.phosphorGray}>Tab to switch fields</Text>
           <Text color={ARCADE_COLORS.phosphorGray}>Modes: bypassPermissions, acceptEdits, default</Text>
+          <Text color={ARCADE_COLORS.phosphorGray}>Provider: ← → to cycle (claude/gemini/ollama)</Text>
           <Text color={ARCADE_COLORS.phosphorGray}>
             Enter to deploy{ARCADE_DECOR.separator}Esc abort
           </Text>

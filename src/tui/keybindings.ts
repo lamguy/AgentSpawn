@@ -230,9 +230,9 @@ export function handleNavigationKeypress(
     return stateResult(
       pushOverlay(state, {
         kind: 'session-creation',
-        fields: { name: '', template: '', directory: '.', permissionMode: 'bypassPermissions' },
+        fields: { name: '', template: '', directory: '.', permissionMode: 'bypassPermissions', provider: 'claude' },
         activeField: 'name',
-        errors: { name: '', template: '', directory: '', permissionMode: '' },
+        errors: { name: '', template: '', directory: '', permissionMode: '', provider: '' },
         isSubmitting: false,
       }),
     );
@@ -493,7 +493,7 @@ export function handleSessionCreationKeypress(
 
     case KEY_CODES.TAB: {
       const fieldOrder: SessionCreationOverlayState['activeField'][] = [
-        'name', 'template', 'directory', 'permissionMode',
+        'name', 'template', 'directory', 'permissionMode', 'provider',
       ];
       const currentIdx = fieldOrder.indexOf(overlay.activeField);
       const nextField = fieldOrder[(currentIdx + 1) % fieldOrder.length];
@@ -507,7 +507,7 @@ export function handleSessionCreationKeypress(
 
     case KEY_CODES.SHIFT_TAB: {
       const fieldOrder: SessionCreationOverlayState['activeField'][] = [
-        'name', 'template', 'directory', 'permissionMode',
+        'name', 'template', 'directory', 'permissionMode', 'provider',
       ];
       const currentIdx = fieldOrder.indexOf(overlay.activeField);
       const prevField = fieldOrder[(currentIdx - 1 + fieldOrder.length) % fieldOrder.length];
@@ -521,7 +521,7 @@ export function handleSessionCreationKeypress(
 
     case KEY_CODES.ENTER: {
       // Validate
-      const errors = { name: '', template: '', directory: '', permissionMode: '' };
+      const errors = { name: '', template: '', directory: '', permissionMode: '', provider: '' };
       const trimmedName = overlay.fields.name.trim();
 
       if (!trimmedName) {
@@ -545,6 +545,7 @@ export function handleSessionCreationKeypress(
       const popped = popOverlay(submitting);
 
       const trimmedTemplate = overlay.fields.template.trim();
+      const provider = overlay.fields.provider || 'claude';
       if (trimmedTemplate) {
         return actionResult(popped, {
           kind: 'create-session-from-template',
@@ -552,6 +553,7 @@ export function handleSessionCreationKeypress(
           templateName: trimmedTemplate,
           directory: overlay.fields.directory || '.',
           permissionMode: overlay.fields.permissionMode || 'bypassPermissions',
+          provider,
         });
       }
 
@@ -560,11 +562,31 @@ export function handleSessionCreationKeypress(
         name: trimmedName,
         directory: overlay.fields.directory || '.',
         permissionMode: overlay.fields.permissionMode || 'bypassPermissions',
+        provider,
       });
+    }
+
+    case KEY_CODES.LEFT_ARROW:
+    case KEY_CODES.RIGHT_ARROW: {
+      // Cycle provider options with left/right arrows when provider field is active
+      if (overlay.activeField !== 'provider') return stateResult(state);
+      const providerOptions = ['claude', 'gemini', 'ollama', 'openai-compat'] as const;
+      const currentIdx = providerOptions.indexOf(overlay.fields.provider as typeof providerOptions[number]);
+      const safeIdx = currentIdx === -1 ? 0 : currentIdx;
+      const delta = key === KEY_CODES.RIGHT_ARROW ? 1 : -1;
+      const nextProvider = providerOptions[(safeIdx + delta + providerOptions.length) % providerOptions.length];
+      return stateResult(
+        replaceTopOverlay(state, {
+          ...overlay,
+          fields: { ...overlay.fields, provider: nextProvider },
+        }),
+      );
     }
 
     case KEY_CODES.BACKSPACE: {
       const field = overlay.activeField;
+      // Provider field is not free-text; ignore backspace on it
+      if (field === 'provider') return stateResult(state);
       const currentValue = overlay.fields[field];
       if (currentValue.length === 0) return stateResult(state);
       return stateResult(
@@ -580,8 +602,8 @@ export function handleSessionCreationKeypress(
     }
 
     default: {
-      // Only accept printable single characters for text input
-      if (key.length === 1 && key >= ' ' && key <= '~') {
+      // Only accept printable single characters for text input (not provider field)
+      if (key.length === 1 && key >= ' ' && key <= '~' && overlay.activeField !== 'provider') {
         const field = overlay.activeField;
         return stateResult(
           replaceTopOverlay(state, {

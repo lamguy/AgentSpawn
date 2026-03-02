@@ -5,16 +5,16 @@
 
 // ── Colors ──────────────────────────────────────────────────────────
 export const ARCADE_COLORS = {
-  neonCyan:       '#00F5FF',
-  electricPurple: '#B026FF',
-  hotPink:        '#FF3CAC',
-  acidYellow:     '#FFDD00',
-  neonGreen:      '#2BFF88',
-  laserRed:       '#FF2450',
-  arcadeOrange:   '#FF9A00',
-  phosphorGray:   '#4A4A5A',
-  ghostWhite:     '#E8E8FF',
-  scanlineGray:   '#8888AA',
+  neonCyan:       '#89B4FA',
+  electricPurple: '#B4BEFE',
+  hotPink:        '#CBA6F7',
+  acidYellow:     '#F9E2AF',
+  neonGreen:      '#A6E3A1',
+  laserRed:       '#F38BA8',
+  arcadeOrange:   '#FAB387',
+  phosphorGray:   '#585B70',
+  ghostWhite:     '#CDD6F4',
+  scanlineGray:   '#9399B2',
 } as const;
 
 // ── Status config ───────────────────────────────────────────────────
@@ -48,8 +48,8 @@ export const ARCADE_MENU_LABELS: Record<string, string> = {
 
 // ── Decorative helpers ───────────────────────────────────────────────
 export const ARCADE_DECOR = {
-  sectionTitle:   (text: string): string => `-=[ ${text} ]=-`,
-  scanline:       '~-~-~-~-~-~-~-~-~-~-~-~-~-~-~-~-~-~-~-~-~-~-~-~',
+  sectionTitle:   (text: string): string => `── ${text} ──`,
+  scanline:       '─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─',
   separator:      ' :: ',
   cursorSelected: '[>]',
   cursorBlank:    '   ',

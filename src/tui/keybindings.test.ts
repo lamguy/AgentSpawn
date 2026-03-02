@@ -520,9 +520,9 @@ describe('handleSessionCreationKeypress', () => {
     const state = createMockState(['existing']);
     const overlay: SessionCreationOverlayState = {
       kind: 'session-creation',
-      fields: { name: '', template: '', directory: '.', permissionMode: 'bypassPermissions' },
+      fields: { name: '', template: '', directory: '.', permissionMode: 'bypassPermissions', provider: 'claude' },
       activeField: 'name',
-      errors: { name: '', template: '', directory: '', permissionMode: '' },
+      errors: { name: '', template: '', directory: '', permissionMode: '', provider: '' },
       isSubmitting: false,
     };
     state.overlayStack = [overlay];
@@ -547,7 +547,7 @@ describe('handleSessionCreationKeypress', () => {
     ).toBe('template');
   });
 
-  it('should cycle through all four fields in session creation', () => {
+  it('should cycle through all five fields in session creation', () => {
     const { state, overlay } = creationState();
     // Start at name
     expect(overlay.activeField).toBe('name');
@@ -573,12 +573,19 @@ describe('handleSessionCreationKeypress', () => {
     const o3 = s3.overlayStack[0] as SessionCreationOverlayState;
     expect(o3.activeField).toBe('permissionMode');
 
-    // Tab back to name
+    // Tab to provider
     const s4 = expectState(
       handleSessionCreationKeypress(s3, o3, KEY_CODES.TAB),
     );
     const o4 = s4.overlayStack[0] as SessionCreationOverlayState;
-    expect(o4.activeField).toBe('name');
+    expect(o4.activeField).toBe('provider');
+
+    // Tab back to name (wraps around)
+    const s5 = expectState(
+      handleSessionCreationKeypress(s4, o4, KEY_CODES.TAB),
+    );
+    const o5 = s5.overlayStack[0] as SessionCreationOverlayState;
+    expect(o5.activeField).toBe('name');
   });
 
   it('should switch fields back on Shift+Tab', () => {
@@ -657,7 +664,7 @@ describe('handleSessionCreationKeypress', () => {
     const { state, overlay: base } = creationState();
     const overlay = {
       ...base,
-      fields: { name: 'new-session', template: '', directory: '/tmp/project', permissionMode: 'bypassPermissions' },
+      fields: { name: 'new-session', template: '', directory: '/tmp/project', permissionMode: 'bypassPermissions', provider: 'claude' },
     };
     state.overlayStack = [overlay];
     const result = handleSessionCreationKeypress(
@@ -679,7 +686,7 @@ describe('handleSessionCreationKeypress', () => {
     const { state, overlay: base } = creationState();
     const overlay = {
       ...base,
-      fields: { name: 'new-session', template: 'my-template', directory: '/tmp/project', permissionMode: 'bypassPermissions' },
+      fields: { name: 'new-session', template: 'my-template', directory: '/tmp/project', permissionMode: 'bypassPermissions', provider: 'claude' },
     };
     state.overlayStack = [overlay];
     const result = handleSessionCreationKeypress(

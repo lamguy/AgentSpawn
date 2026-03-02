@@ -226,7 +226,7 @@ describe('Session', () => {
     const p = session.sendPrompt('bad');
     mockChild.emit('close', 1);
 
-    await expect(p).rejects.toThrow('Claude exited with code 1');
+    await expect(p).rejects.toThrow('claude exited with code 1');
     expect(errorHandler).toHaveBeenCalledTimes(1);
   });
 
@@ -828,7 +828,7 @@ describe('Session', () => {
       const p = session.sendPrompt('test prompt');
       mockChild.emit('close', 1, null);
 
-      await expect(p).rejects.toThrow('Claude exited with code 1');
+      await expect(p).rejects.toThrow('claude exited with code 1');
 
       expect(crashedHandler).toHaveBeenCalledTimes(1);
       expect(crashedHandler).toHaveBeenCalledWith({
@@ -855,7 +855,7 @@ describe('Session', () => {
       const p = session.sendPrompt('signal test');
       mockChild.emit('close', null, 'SIGTERM');
 
-      await expect(p).rejects.toThrow('Claude exited with code null');
+      await expect(p).rejects.toThrow('claude exited with code null');
 
       expect(crashedHandler).toHaveBeenCalledTimes(1);
       expect(crashedHandler.mock.calls[0][0]).toMatchObject({
